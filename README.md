@@ -4,6 +4,18 @@
 
 The shardstream protocol is Bittorrent for livestreams. It defines a general purpose framework for streaming data through a tree shaped network built of one coordinator node and many peer nodes.
 
+## shardstreamTerminal
+
+To use the terminal based example, start two processes using the following steps:
+
+```
+go run examples/shardstreamTerminal coordinator -l 1234
+```
+
+```
+go run examples/shardstreamTerminal peer -c localhost 1234 -l 1235
+```
+
 ## TODO
 
 1. Shard data streams across nodes without creating cycles. As a peer I would like to consume all shards of the data stream while serving only one slice of the stream to downstream peers.
