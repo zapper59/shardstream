@@ -22,7 +22,7 @@ The following steps build a simple example of livestreaming an MP4 file over sha
 
 Make an alias to your local VLC installation:
 ```
-alias vlcexe=`/c/Program\ Files/VideoLAN/VLC/vlc.exe'
+alias vlcexe='/c/Program\ Files/VideoLAN/VLC/vlc.exe'
 ```
 
 Start the video stream:
