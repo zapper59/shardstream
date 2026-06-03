@@ -35,6 +35,11 @@ Connect a peer node to view the video:
 go run examples/shardstreamTerminal/ peer -c localhost:1234 -l 1235 | vlcexe -q -
 ```
 
+Optional - Transcode the video to h264 to better support stream interruptions:
+```
+--sout='#transcode{venc=x264{keyint=60,idrint=2},vcodec=h264,samplerate=22050}:duplicate{dst=file{mux=ts,dst='-'},dst=display}'
+```
+
 
 ## TODO
 
