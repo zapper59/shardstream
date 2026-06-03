@@ -18,7 +18,9 @@ type HandshakeInfo struct {
     peerListeningOn int
 }
 
-func RunCoordinator(port int) {
+const ReadBufferSize = 1024
+
+func RunCoordinator(streamSource io.Reader, port int) {
     portStr := fmt.Sprintf("%d", port)
     fmt.Println("Listening on port: " + portStr)
     listener, err := net.Listen("tcp", ":" + portStr)
@@ -32,23 +34,35 @@ func RunCoordinator(port int) {
         if conn, err := listener.Accept(); err != nil {
             log.Println(err)
         } else {
-            go handleConnection(conn)
+            go handleConnection(streamSource, conn)
         }
     }
 }
 
-func handleConnection(conn net.Conn) {
+func pipeData(streamSource io.Reader, streamOutput io.Writer) {
+    readBuffer := make([]byte, ReadBufferSize)
+    for {
+        bytesRead, err := streamSource.Read(readBuffer)
+        if err != nil {
+            log.Println(err)
+            return
+        }
+
+        if _, err := streamOutput.Write(readBuffer[:bytesRead]); err != nil {
+            log.Println(err)
+            return
+        }
+    }
+}
+
+func handleConnection(streamSource io.Reader, conn net.Conn) {
     defer conn.Close()
 
     if info, err := receiveHandshake(conn); err != nil {
         log.Println(err)
     } else {
-        fmt.Printf("Peer is listening on: %d", info.peerListeningOn)
-
-        if _, err := conn.Write([]byte("Stream page 1\n")); err != nil {
-            log.Println("Failed to stream page 1")
-            log.Println(err)
-        }
+        fmt.Printf("Peer is listening on: %d\n", info.peerListeningOn)
+        pipeData(streamSource, conn)
     }
 }
 
@@ -69,7 +83,7 @@ func sendHandshake(conn net.Conn, info HandshakeInfo) (error) {
     return err
 }
 
-func RunPeer(options PeerOptions) {
+func RunPeer(streamOutput io.Writer, options PeerOptions) {
     conn, err := net.Dial("tcp", options.CoordinatorHost)
     if err != nil {
         log.Fatal(err)
@@ -79,9 +93,5 @@ func RunPeer(options PeerOptions) {
         log.Fatal(err)
     }
 
-    page, err := bufio.NewReader(conn).ReadString('\n')
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println(page)
+    pipeData(bufio.NewReader(conn), streamOutput)
 }

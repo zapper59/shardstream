@@ -1,6 +1,7 @@
 package main
 
 import (
+    "bufio"
     "github.com/akamensky/argparse"
     "github.com/zapper59/shardstream"
     "log"
@@ -18,9 +19,11 @@ func main() {
     parsedArgs := parseArgs()
 
     if parsedArgs.coordinatorCommand.Happened() {
-        shardstream.RunCoordinator(parsedArgs.listenPort)
+        stdin := bufio.NewReader(os.Stdin)
+        shardstream.RunCoordinator(stdin, parsedArgs.listenPort)
     } else if parsedArgs.peerCommand.Happened() {
         shardstream.RunPeer(
+            os.Stdout,
             shardstream.PeerOptions{ parsedArgs.listenPort, *parsedArgs.coordinatorHost },
         )
     } else {
