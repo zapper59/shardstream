@@ -3,25 +3,35 @@ package shardstream
 import (
     "bufio"
     "encoding/binary"
+    "errors"
     "io"
     "log"
     "net"
+    "strings"
     "sync"
 )
 
 type PeerOptions struct {
     ListenAddress string
-    CoordinatorHost string
+    CoordinatorAddress string
 }
 
+// Handshake metadata indicating which halves of the data stream are involved.
+type ShardData uint64
+const AB ShardData = 3 // Indicates a request for a full data stream. Ie. a non-sharded data source.
+
 type HandshakeInfo struct {
+    shards ShardData
     peerListeningOn string
 }
 
-const ReadBufferSize = 1024 * 1024
+type HandshakeAck struct {
+    redirectTo map[ShardData]HandshakeInfo // Empty when no redirect is required.
+}
 
-// Indicates a request for a full data stream. Ie. a non-sharded data source.
-const AB = 3
+const ReadBufferSize = 1024 * 1024
+const BranchingFactor = 2 // The numer of non-local peers to allow before sending redirects.
+const MaxUint64 = ^uint64(0)
 
 func RunCoordinator(streamSource io.Reader, listenAddress string) {
     listener, err := net.Listen("tcp", listenAddress)
@@ -38,7 +48,9 @@ func RunCoordinator(streamSource io.Reader, listenAddress string) {
 
 type ConnectedPeer struct {
     UID uint64
-    info HandshakeInfo
+    childPeers uint64
+    info *HandshakeInfo // N.B. info is nil IFF the peer is a local consumer of data, Ie. does not
+                        // count against the network branching factor.
     streamOutput io.Writer
     errorLog chan error
 }
@@ -84,23 +96,63 @@ func (self *Multiplexer) dropPeer(uid uint64) {
     self.mutex.Unlock()
 }
 
-func (self *Multiplexer) registerPeerAndWaitForError(info HandshakeInfo, streamOutput io.Writer) (error) {
+func (self *Multiplexer) redirectPeerOrWaitForError(info *HandshakeInfo, streamOutput io.Writer) (error) {
     self.mutex.Lock()
 
-    peer := ConnectedPeer {
-        self.peerUIDAllocator,
-        info,
-        streamOutput,
-        make(chan error),
+    errorLog := make(chan error, 1)
+    remotePeers := 0
+    for _, peer := range self.connectedPeers {
+        if peer.info != nil {
+            remotePeers++
+        }
     }
 
-    self.peerUIDAllocator += 1
-    self.connectedPeers[peer.UID] = peer
+    ack := HandshakeAck { make(map[ShardData]HandshakeInfo) }
+
+    if info != nil && remotePeers >= BranchingFactor {
+        minChildPeers := MaxUint64
+        optimalPeerAddress := "invalid_hostname"
+        optimalPeerUID := MaxUint64
+        for uid, peer := range self.connectedPeers {
+            if peer.info != nil && peer.childPeers < minChildPeers {
+                minChildPeers = peer.childPeers
+                optimalPeerAddress = peer.info.peerListeningOn
+                optimalPeerUID = uid
+            }
+        }
+        tempPeer := self.connectedPeers[optimalPeerUID]
+        tempPeer.childPeers += 1
+        self.connectedPeers[optimalPeerUID] = tempPeer
+
+        ack.redirectTo[AB] = HandshakeInfo { AB, optimalPeerAddress }
+        errorLog <- errors.New("Redirect to: " + optimalPeerAddress)
+    } else {
+        peer := ConnectedPeer {
+            self.peerUIDAllocator,
+            0, // Start with no childPeers.
+            info,
+            streamOutput,
+            errorLog,
+        }
+
+        self.peerUIDAllocator += 1
+        self.connectedPeers[peer.UID] = peer
+
+        defer self.dropPeer(peer.UID)
+    }
+
+    // N.B. It is important that the ack is the first thing sent on this connection before releasing
+    // the mutex and allowing subsequent data streaming.
+    if info != nil {
+        err := sendHandshakeAck(streamOutput, ack)
+        if err != nil {
+            log.Println(err)
+        }
+    }
 
     self.mutex.Unlock()
 
-    defer self.dropPeer(peer.UID)
-    return <-peer.errorLog
+    return <-errorLog
 }
 
 func (self *Multiplexer) driveServer(listener net.Listener) {
@@ -116,32 +168,18 @@ func (self *Multiplexer) driveServer(listener net.Listener) {
 func (self *Multiplexer) handleConnection(conn net.Conn) {
     defer conn.Close()
 
-    if info, err := receiveHandshake(conn); err != nil {
-        log.Println(err)
-    } else {
-        log.Println(self.registerPeerAndWaitForError(*info, conn))
-    }
-}
-
-func receiveHandshake(conn net.Conn) (*HandshakeInfo, error) {
-    currentWord := make([]byte, 8)
-
-    // For now, throw away the shard info.
-    if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
-        return nil, err
-    }
-
-    peerListeningOn, err := bufio.NewReader(conn).ReadString(0)
+    info, err := receiveHandshake(conn)
     if err != nil {
-        return nil, err
+        log.Println(err)
+        return
     }
-    info := &HandshakeInfo { peerListeningOn }
-    return info, nil
+
+    log.Println(self.redirectPeerOrWaitForError(info, conn))
 }
 
-func sendHandshake(conn net.Conn, info HandshakeInfo) (error) {
+func sendHandshake(conn io.Writer, info HandshakeInfo) (error) {
     currentWord := make([]byte, 8)
-    binary.BigEndian.PutUint64(currentWord, uint64(AB))
+    binary.BigEndian.PutUint64(currentWord, uint64(info.shards))
     _, err := conn.Write(currentWord)
     if err != nil {
         return err
@@ -155,6 +193,82 @@ func sendHandshake(conn net.Conn, info HandshakeInfo) (error) {
     return err
 }
 
+func receiveHandshake(conn net.Conn) (*HandshakeInfo, error) {
+    currentWord := make([]byte, 8)
+    if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+        return nil, err
+    }
+    shards := binary.BigEndian.Uint64(currentWord)
+
+    peerListeningOn, err := bufio.NewReader(conn).ReadString(0)
+    if err != nil {
+        return nil, err
+    }
+    peerListeningOn = strings.TrimRight(peerListeningOn, "\x00")
+    info := &HandshakeInfo { ShardData(shards), peerListeningOn }
+    return info, nil
+}
+
+func sendHandshakeAck(conn io.Writer, ack HandshakeAck) (error) {
+    currentWord := make([]byte, 8)
+    binary.BigEndian.PutUint64(currentWord, uint64(len(ack.redirectTo)))
+    _, err := conn.Write(currentWord)
+    if err != nil {
+        return err
+    }
+
+    for _, info := range ack.redirectTo {
+        if err := sendHandshake(conn, info); err != nil {
+            return err
+        }
+    }
+
+    return nil
+}
+
+func receiveHandshakeAck(conn net.Conn) (*HandshakeAck, error) {
+    currentWord := make([]byte, 8)
+    if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+        return nil, err
+    }
+    redirectToLen := binary.BigEndian.Uint64(currentWord)
+
+    ack := HandshakeAck { make(map[ShardData]HandshakeInfo) }
+    for i := 0; uint64(i) < redirectToLen; i++ {
+        info, err := receiveHandshake(conn)
+        if err != nil {
+            return nil, err
+        }
+
+        ack.redirectTo[info.shards] = *info
+    }
+
+    return &ack, nil
+}
+
+func runDiscovery(info HandshakeInfo, host string) (net.Conn){
+    conn, err := net.Dial("tcp", host)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    if err := sendHandshake(conn, info); err != nil {
+        log.Fatal(err)
+    }
+
+    ack, err := receiveHandshakeAck(conn)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    if len(ack.redirectTo) == 0 {
+        return conn
+    } else {
+        conn.Close()
+        return runDiscovery(info, ack.redirectTo[AB].peerListeningOn)
+    }
+}
+
 func RunPeer(streamOutput io.Writer, options PeerOptions) {
     listener, err := net.Listen("tcp", options.ListenAddress)
     if err != nil {
@@ -163,18 +277,11 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
 
     defer listener.Close()
 
-    conn, err := net.Dial("tcp", options.CoordinatorHost)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    info := HandshakeInfo { options.ListenAddress }
-    if err := sendHandshake(conn, info); err != nil {
-        log.Fatal(err)
-    }
+    info := HandshakeInfo { AB, options.ListenAddress }
+    conn := runDiscovery(info, options.CoordinatorAddress)
 
     multiplexer := newMultiplexer()
     go multiplexer.driveDataStream(conn)
     go multiplexer.driveServer(listener)
-    log.Fatal(multiplexer.registerPeerAndWaitForError(info, streamOutput))
+    log.Fatal(multiplexer.redirectPeerOrWaitForError(nil, streamOutput))
 }
