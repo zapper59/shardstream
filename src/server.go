@@ -13,9 +13,10 @@ type PeerOptions struct {
     CoordinatorAddress string
 }
 
-const ReadBufferSize = 1024 * 1024
-const BranchingFactor = 2 // The numer of non-local peers to allow before sending redirects.
+const MaxUint16 = ^uint16(0)
 const MaxUint64 = ^uint64(0)
+const ReadBufferSize = MaxUint16
+const BranchingFactor = 2 // The numer of non-local peers to allow before sending redirects.
 
 func RunCoordinator(streamSource io.Reader, listenAddress string) {
     listener, err := net.Listen("tcp", listenAddress)

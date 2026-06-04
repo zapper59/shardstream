@@ -89,4 +89,3 @@ func receiveHandshakeAck(conn net.Conn) (*HandshakeAck, error) {
 
     return &ack, nil
 }
-
