@@ -2,7 +2,10 @@
 
 ## Introduction
 
-The shardstream protocol is Bittorrent for livestreams. It defines a general purpose framework for streaming data through a tree shaped network built of one coordinator node and many peer nodes.
+The shardstream protocol is Bittorrent for livestreams. It defines a general purpose framework for streaming data through a tree shaped network built of one Coordinator node and many Peer nodes.
+
+The protocol includes a discovery handshake wherin the coordinator redirects new Peers down the tree to a leaf with minimal connected children. This distributes the flow of data evenly across the
+network. The max required upload bandwith for any particular node is equal to twice that of the incoming data bandwidth.
 
 ## shardstreamTerminal
 
