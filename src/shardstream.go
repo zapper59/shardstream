@@ -1,8 +1,8 @@
 package shardstream
 
 import (
+    "bufio"
     "encoding/binary"
-    "fmt"
     "io"
     "log"
     "net"
@@ -10,20 +10,21 @@ import (
 )
 
 type PeerOptions struct {
-    ListenPort int
+    ListenAddress string
     CoordinatorHost string
 }
 
 type HandshakeInfo struct {
-    peerListeningOn int
+    peerListeningOn string
 }
 
 const ReadBufferSize = 1024 * 1024
 
-func RunCoordinator(streamSource io.Reader, port int) {
-    portStr := fmt.Sprintf("%d", port)
-    fmt.Println("Listening on port: " + portStr)
-    listener, err := net.Listen("tcp", ":" + portStr)
+// Indicates a request for a full data stream. Ie. a non-sharded data source.
+const AB = 3
+
+func RunCoordinator(streamSource io.Reader, listenAddress string) {
+    listener, err := net.Listen("tcp", listenAddress)
     if err != nil {
         log.Fatal(err)
     }
@@ -32,14 +33,7 @@ func RunCoordinator(streamSource io.Reader, port int) {
 
     multiplexer := newMultiplexer()
     go multiplexer.driveDataStream(streamSource)
-
-    for {
-        if conn, err := listener.Accept(); err != nil {
-            log.Println(err)
-        } else {
-            go handleConnection(&multiplexer, streamSource, conn)
-        }
-    }
+    multiplexer.driveServer(listener)
 }
 
 type ConnectedPeer struct {
@@ -109,46 +103,78 @@ func (self *Multiplexer) registerPeerAndWaitForError(info HandshakeInfo, streamO
     return <-peer.errorLog
 }
 
-func handleConnection(multiplexer *Multiplexer, streamSource io.Reader, conn net.Conn) {
+func (self *Multiplexer) driveServer(listener net.Listener) {
+    for {
+        if conn, err := listener.Accept(); err != nil {
+            log.Println(err)
+        } else {
+            go self.handleConnection(conn)
+        }
+    }
+}
+
+func (self *Multiplexer) handleConnection(conn net.Conn) {
     defer conn.Close()
 
     if info, err := receiveHandshake(conn); err != nil {
         log.Println(err)
     } else {
-        fmt.Printf("Peer is listening on: %d\n", info.peerListeningOn)
-        log.Println(multiplexer.registerPeerAndWaitForError(*info, conn))
+        log.Println(self.registerPeerAndWaitForError(*info, conn))
     }
 }
 
 func receiveHandshake(conn net.Conn) (*HandshakeInfo, error) {
     currentWord := make([]byte, 8)
+
+    // For now, throw away the shard info.
     if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
         return nil, err
     }
 
-    info := &HandshakeInfo { int(binary.BigEndian.Uint64(currentWord)) }
+    peerListeningOn, err := bufio.NewReader(conn).ReadString(0)
+    if err != nil {
+        return nil, err
+    }
+    info := &HandshakeInfo { peerListeningOn }
     return info, nil
 }
 
 func sendHandshake(conn net.Conn, info HandshakeInfo) (error) {
     currentWord := make([]byte, 8)
-    binary.BigEndian.PutUint64(currentWord, uint64(info.peerListeningOn))
+    binary.BigEndian.PutUint64(currentWord, uint64(AB))
     _, err := conn.Write(currentWord)
+    if err != nil {
+        return err
+    }
+
+    _, err = conn.Write([]byte(info.peerListeningOn))
+    if err != nil {
+        return err
+    }
+    _, err = conn.Write([]byte{0})
     return err
 }
 
 func RunPeer(streamOutput io.Writer, options PeerOptions) {
+    listener, err := net.Listen("tcp", options.ListenAddress)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    defer listener.Close()
+
     conn, err := net.Dial("tcp", options.CoordinatorHost)
     if err != nil {
         log.Fatal(err)
     }
 
-    info := HandshakeInfo { options.ListenPort }
+    info := HandshakeInfo { options.ListenAddress }
     if err := sendHandshake(conn, info); err != nil {
         log.Fatal(err)
     }
 
     multiplexer := newMultiplexer()
     go multiplexer.driveDataStream(conn)
+    go multiplexer.driveServer(listener)
     log.Fatal(multiplexer.registerPeerAndWaitForError(info, streamOutput))
 }

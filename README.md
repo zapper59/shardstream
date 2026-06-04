@@ -9,11 +9,11 @@ The shardstream protocol is Bittorrent for livestreams. It defines a general pur
 To use the terminal based example, start two processes using the following steps:
 
 ```
-go run examples/shardstreamTerminal coordinator -l 1234
+go run examples/shardstreamTerminal coordinator -l localhost:1234
 ```
 
 ```
-go run examples/shardstreamTerminal peer -c localhost:1234 -l 1235
+go run examples/shardstreamTerminal peer -c localhost:1234 -l localhost:1235
 ```
 
 ## VLC Livestreaming
@@ -27,12 +27,12 @@ alias vlcexe='/c/Program\ Files/VideoLAN/VLC/vlc.exe'
 
 Start the video stream:
 ```
-vlcexe -q --loop /path/to/video.mp4 --sout='#duplicate{dst=file{mux=ts,dst='-'}}' | go run examples/shardstreamTerminal/ coordinator -l 1234
+vlcexe -q --loop /path/to/video.mp4 --sout='#duplicate{dst=file{mux=ts,dst='-'}}' | go run examples/shardstreamTerminal/ coordinator -l localhost:1234
 ```
 
 Connect a peer node to view the video:
 ```
-go run examples/shardstreamTerminal/ peer -c localhost:1234 -l 1235 | vlcexe -q -
+go run examples/shardstreamTerminal/ peer -c localhost:1234 -l localhost:1235 | vlcexe -q -
 ```
 
 Optional - Transcode the video to h264 to better support stream interruptions:

@@ -9,10 +9,10 @@ import (
 )
 
 type ParsedArgs struct {
-    listenPort int
+    listenAddress string
     coordinatorCommand *argparse.Command
     peerCommand *argparse.Command
-    coordinatorHost *string
+    coordinatorAddress *string
 }
 
 func main() {
@@ -20,11 +20,11 @@ func main() {
 
     if parsedArgs.coordinatorCommand.Happened() {
         stdin := bufio.NewReader(os.Stdin)
-        shardstream.RunCoordinator(stdin, parsedArgs.listenPort)
+        shardstream.RunCoordinator(stdin, parsedArgs.listenAddress)
     } else if parsedArgs.peerCommand.Happened() {
         shardstream.RunPeer(
             os.Stdout,
-            shardstream.PeerOptions{ parsedArgs.listenPort, *parsedArgs.coordinatorHost },
+            shardstream.PeerOptions{ parsedArgs.listenAddress, *parsedArgs.coordinatorAddress },
         )
     } else {
         log.Fatal("Unexpected lack of subcommand!")
@@ -36,18 +36,20 @@ func parseArgs() (ParsedArgs) {
         "shardstreamTerminal",
         "Start a node to participate in a distributed terminal based broadcast.",
     )
-    listenPort := parser.Int(
+    listenAddress := parser.String(
         "l",
-        "listenPort",
-        &argparse.Options{Required: true, Help: "The port to accept incoming requests on."},
+        "listenAddress",
+        &argparse.Options{
+            Required: true, Help: "The <hostname>:<port> to accept incoming requests on.",
+        },
     )
 
     coordinator := parser.NewCommand("coordinator", "Start a root of a broadcast tree.")
 
     peer := parser.NewCommand("peer", "Start a participant in a broadcast tree.")
-    coordinatorHost := peer.String(
+    coordinatorAddress := peer.String(
         "c",
-        "coordinatorHost",
+        "coordinatorAddress",
         &argparse.Options{
             Required: true, Help: "The <hostname>:<port> to contact the coordinator at.",
         },
@@ -57,5 +59,10 @@ func parseArgs() (ParsedArgs) {
         log.Fatal(parser.Usage(err))
     }
 
-    return ParsedArgs{*listenPort, coordinator, peer, coordinatorHost}
+    return ParsedArgs{
+        *listenAddress,
+        coordinator,
+        peer,
+        coordinatorAddress,
+    }
 }
