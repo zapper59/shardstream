@@ -91,15 +91,61 @@ func (self *Multiplexer) driveDataStream(streamSource io.Reader) {
 }
 
 func (self *Multiplexer) dropPeer(uid uint64) {
+    if uid == MaxUint64 {
+        return
+    }
+
     self.mutex.Lock()
     delete(self.connectedPeers, uid)
     self.mutex.Unlock()
 }
 
-func (self *Multiplexer) redirectPeerOrWaitForError(info *HandshakeInfo, streamOutput io.Writer) (error) {
-    self.mutex.Lock()
+func (self *Multiplexer) computeRedirectLocked() (HandshakeAck, string) {
+    ack := HandshakeAck { make(map[ShardData]HandshakeInfo) }
 
-    errorLog := make(chan error, 1)
+    minChildPeers := MaxUint64
+    optimalPeerAddress := "invalid_hostname"
+    optimalPeerUID := MaxUint64
+    for uid, peer := range self.connectedPeers {
+        if peer.info != nil && peer.childPeers < minChildPeers {
+            minChildPeers = peer.childPeers
+            optimalPeerAddress = peer.info.peerListeningOn
+            optimalPeerUID = uid
+        }
+    }
+    tempPeer := self.connectedPeers[optimalPeerUID]
+    tempPeer.childPeers += 1
+    self.connectedPeers[optimalPeerUID] = tempPeer
+
+    ack.redirectTo[AB] = HandshakeInfo { AB, optimalPeerAddress }
+    return ack, optimalPeerAddress
+}
+
+func (self *Multiplexer) connectPeerLocked(
+    info *HandshakeInfo, streamOutput io.Writer, peerErrorLog chan error,
+) (uint64) {
+    self.peerUIDAllocator += 1
+    connectedUid := self.peerUIDAllocator
+
+    self.connectedPeers[connectedUid] = ConnectedPeer {
+        0, // Start with no childPeers.
+        connectedUid,
+        info,
+        streamOutput,
+        peerErrorLog,
+    }
+
+    return connectedUid
+}
+
+func (self *Multiplexer) redirectOrConnectPeer(
+    info *HandshakeInfo, streamOutput io.Writer, peerErrorLog chan error,
+) (uint64) {
+    self.mutex.Lock()
+    defer self.mutex.Unlock()
+
+    connectedUid := MaxUint64
+
     remotePeers := 0
     for _, peer := range self.connectedPeers {
         if peer.info != nil {
@@ -110,35 +156,11 @@ func (self *Multiplexer) redirectPeerOrWaitForError(info *HandshakeInfo, streamO
     ack := HandshakeAck { make(map[ShardData]HandshakeInfo) }
 
     if info != nil && remotePeers >= BranchingFactor {
-        minChildPeers := MaxUint64
-        optimalPeerAddress := "invalid_hostname"
-        optimalPeerUID := MaxUint64
-        for uid, peer := range self.connectedPeers {
-            if peer.info != nil && peer.childPeers < minChildPeers {
-                minChildPeers = peer.childPeers
-                optimalPeerAddress = peer.info.peerListeningOn
-                optimalPeerUID = uid
-            }
-        }
-        tempPeer := self.connectedPeers[optimalPeerUID]
-        tempPeer.childPeers += 1
-        self.connectedPeers[optimalPeerUID] = tempPeer
-
-        ack.redirectTo[AB] = HandshakeInfo { AB, optimalPeerAddress }
-        errorLog <- errors.New("Redirect to: " + optimalPeerAddress)
+        redirectAck, optimalPeerAddress := self.computeRedirectLocked()
+        ack = redirectAck
+        peerErrorLog <- errors.New("Redirect to: " + optimalPeerAddress)
     } else {
-        peer := ConnectedPeer {
-            self.peerUIDAllocator,
-            0, // Start with no childPeers.
-            info,
-            streamOutput,
-            errorLog,
-        }
-
-        self.peerUIDAllocator += 1
-        self.connectedPeers[peer.UID] = peer
-
-        defer self.dropPeer(peer.UID)
+        connectedUid = self.connectPeerLocked(info, streamOutput, peerErrorLog)
     }
 
     // N.B. It is important that the ack is the first thing sent on this connection before releasing
@@ -150,7 +172,16 @@ func (self *Multiplexer) redirectPeerOrWaitForError(info *HandshakeInfo, streamO
         }
     }
 
-    self.mutex.Unlock()
+    return connectedUid
+}
+
+func (self *Multiplexer) redirectPeerOrWaitForError(
+    info *HandshakeInfo, streamOutput io.Writer,
+) (error) {
+    errorLog := make(chan error, 1)
+
+    connectedUid := self.redirectOrConnectPeer(info, streamOutput, errorLog)
+    defer self.dropPeer(connectedUid)
 
     return <-errorLog
 }
