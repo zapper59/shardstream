@@ -4,7 +4,6 @@ import (
     "bufio"
     "encoding/binary"
     "io"
-    "net"
     "strings"
 )
 
@@ -37,7 +36,7 @@ func sendHandshake(conn io.Writer, info HandshakeInfo) (error) {
     return err
 }
 
-func receiveHandshake(conn net.Conn) (*HandshakeInfo, error) {
+func receiveHandshake(conn io.Reader) (*HandshakeInfo, error) {
     currentWord := make([]byte, 8)
     if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
         return nil, err
@@ -70,7 +69,7 @@ func sendHandshakeAck(conn io.Writer, ack HandshakeAck) (error) {
     return nil
 }
 
-func receiveHandshakeAck(conn net.Conn) (*HandshakeAck, error) {
+func receiveHandshakeAck(conn io.Reader) (*HandshakeAck, error) {
     currentWord := make([]byte, 8)
     if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
         return nil, err
