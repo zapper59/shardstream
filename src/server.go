@@ -1,7 +1,6 @@
 package shardstream
 
 import (
-    "errors"
     "io"
     "log"
     "net"
@@ -33,9 +32,6 @@ func RunCoordinator(streamSource io.Reader, listenAddress string) {
 
 type ConnectedPeer struct {
     UID uint64
-    childPeers uint64
-    info *HandshakeInfo // N.B. info is nil IFF the peer is a local consumer of data, Ie. does not
-                        // count against the network branching factor.
     streamOutput io.Writer
     errorLog chan error
 }
@@ -43,13 +39,13 @@ type ConnectedPeer struct {
 type Multiplexer struct {
     mutex sync.Mutex
 
-    peerUIDAllocator uint64
+    remotePeers RemotePeerTable
     connectedPeers map[uint64]ConnectedPeer
 }
 
 func newMultiplexer() (Multiplexer) {
     return Multiplexer {
-        peerUIDAllocator: 0,
+        remotePeers: newRemotePeerTable(),
         connectedPeers: make(map[uint64]ConnectedPeer),
     }
 }
@@ -81,72 +77,22 @@ func (self *Multiplexer) dropPeer(uid uint64) {
     }
 
     self.mutex.Lock()
+    self.remotePeers.dropPeerLocked(uid)
     delete(self.connectedPeers, uid)
     self.mutex.Unlock()
 }
 
-func (self *Multiplexer) computeRedirectLocked() (HandshakeAck, string) {
-    ack := HandshakeAck { make(map[ShardData]HandshakeInfo) }
+func (self *Multiplexer) redirectPeerOrWaitForError(
+    info *HandshakeInfo, streamOutput io.Writer,
+) (error) {
+    errorLog := make(chan error, 1)
 
-    minChildPeers := MaxUint64
-    optimalPeerAddress := "invalid_hostname"
-    optimalPeerUID := MaxUint64
-    for uid, peer := range self.connectedPeers {
-        if peer.info != nil && peer.childPeers < minChildPeers {
-            minChildPeers = peer.childPeers
-            optimalPeerAddress = peer.info.peerListeningOn
-            optimalPeerUID = uid
-        }
-    }
-    tempPeer := self.connectedPeers[optimalPeerUID]
-    tempPeer.childPeers += 1
-    self.connectedPeers[optimalPeerUID] = tempPeer
-
-    ack.redirectTo[AB] = HandshakeInfo { AB, optimalPeerAddress }
-    return ack, optimalPeerAddress
-}
-
-func (self *Multiplexer) connectPeerLocked(
-    info *HandshakeInfo, streamOutput io.Writer, peerErrorLog chan error,
-) (uint64) {
-    self.peerUIDAllocator += 1
-    connectedUid := self.peerUIDAllocator
-
-    self.connectedPeers[connectedUid] = ConnectedPeer {
-        0, // Start with no childPeers.
-        connectedUid,
-        info,
-        streamOutput,
-        peerErrorLog,
-    }
-
-    return connectedUid
-}
-
-func (self *Multiplexer) redirectOrConnectPeer(
-    info *HandshakeInfo, streamOutput io.Writer, peerErrorLog chan error,
-) (uint64) {
     self.mutex.Lock()
-    defer self.mutex.Unlock()
 
-    connectedUid := MaxUint64
-
-    remotePeers := 0
-    for _, peer := range self.connectedPeers {
-        if peer.info != nil {
-            remotePeers++
-        }
-    }
-
-    ack := HandshakeAck { make(map[ShardData]HandshakeInfo) }
-
-    if info != nil && remotePeers >= BranchingFactor {
-        redirectAck, optimalPeerAddress := self.computeRedirectLocked()
-        ack = redirectAck
-        peerErrorLog <- errors.New("Redirect to: " + optimalPeerAddress)
-    } else {
-        connectedUid = self.connectPeerLocked(info, streamOutput, peerErrorLog)
-    }
+    connectedUid, ack := self.remotePeers.redirectOrConnectPeerLocked(
+        info, streamOutput, errorLog,
+    )
+    defer self.dropPeer(connectedUid)
 
     // N.B. It is important that the ack is the first thing sent on this connection before releasing
     // the mutex and allowing subsequent data streaming.
@@ -157,16 +103,11 @@ func (self *Multiplexer) redirectOrConnectPeer(
         }
     }
 
-    return connectedUid
-}
+    if len(ack.redirectTo) == 0 {
+        self.connectedPeers[connectedUid] = ConnectedPeer { connectedUid, streamOutput, errorLog }
+    }
 
-func (self *Multiplexer) redirectPeerOrWaitForError(
-    info *HandshakeInfo, streamOutput io.Writer,
-) (error) {
-    errorLog := make(chan error, 1)
-
-    connectedUid := self.redirectOrConnectPeer(info, streamOutput, errorLog)
-    defer self.dropPeer(connectedUid)
+    self.mutex.Unlock()
 
     return <-errorLog
 }
