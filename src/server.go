@@ -1,6 +1,7 @@
 package shardstream
 
 import (
+    "errors"
     "io"
     "log"
     "net"
@@ -12,10 +13,7 @@ type PeerOptions struct {
     CoordinatorAddress string
 }
 
-const MaxUint16 = ^uint16(0)
 const MaxUint64 = ^uint64(0)
-const ReadBufferSize = MaxUint16
-const BranchingFactor = 2 // The numer of non-local peers to allow before sending redirects.
 
 func RunCoordinator(streamSource io.Reader, listenAddress string) {
     listener, err := net.Listen("tcp", listenAddress)
@@ -23,96 +21,54 @@ func RunCoordinator(streamSource io.Reader, listenAddress string) {
         log.Fatal(err)
     }
 
-    defer listener.Close()
-
-    multiplexer := newMultiplexer()
-    go multiplexer.driveDataStream(streamSource)
-    multiplexer.driveServer(listener)
+    server := newServer()
+    go server.driveServer(listener)
+    server.driveDataStream(streamSource)
 }
 
-type ConnectedPeer struct {
-    UID uint64
-    streamOutput io.Writer
-    errorLog chan error
+func RunPeer(streamOutput io.Writer, options PeerOptions) {
+    listener, err := net.Listen("tcp", options.ListenAddress)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    info := HandshakeInfo { AB, options.ListenAddress }
+    conn := runDiscovery(info, options.CoordinatorAddress)
+
+    server := newServer()
+    go server.runLocalPeer(streamOutput)
+    go server.driveServer(listener)
+    server.driveDataStream(conn)
 }
 
-type Multiplexer struct {
+type Server struct {
     mutex sync.Mutex
 
     remotePeers RemotePeerTable
-    connectedPeers map[uint64]ConnectedPeer
+    connectedPeers Multiplexer
 }
 
-func newMultiplexer() (Multiplexer) {
-    return Multiplexer {
+func newServer() (Server) {
+    return Server {
         remotePeers: newRemotePeerTable(),
-        connectedPeers: make(map[uint64]ConnectedPeer),
+        connectedPeers: newMultiplexer(),
     }
 }
 
-func (self *Multiplexer) driveDataStream(streamSource io.Reader) {
-    readBuffer := make([]byte, ReadBufferSize)
-    for {
-        bytesRead, err := streamSource.Read(readBuffer)
-        if err != nil {
-            log.Println(err)
-            return
-        }
-
-        self.mutex.Lock()
-
-        for _, peer := range self.connectedPeers {
-            if _, err := peer.streamOutput.Write(readBuffer[:bytesRead]); err != nil {
-                peer.errorLog <- err
-            }
-        }
-
-        self.mutex.Unlock()
-    }
-}
-
-func (self *Multiplexer) dropPeer(uid uint64) {
+func (self *Server) dropPeer(uid uint64) {
     if uid == MaxUint64 {
         return
     }
 
     self.mutex.Lock()
     self.remotePeers.dropPeerLocked(uid)
-    delete(self.connectedPeers, uid)
+    self.connectedPeers.dropPeerLocked(uid)
     self.mutex.Unlock()
 }
 
-func (self *Multiplexer) redirectPeerOrWaitForError(
-    info *HandshakeInfo, streamOutput io.Writer,
-) (error) {
-    errorLog := make(chan error, 1)
+func (self *Server) driveServer(listener net.Listener) {
+    defer listener.Close()
 
-    self.mutex.Lock()
-
-    connectedUid, ack := self.remotePeers.redirectOrConnectPeerLocked(
-        info, streamOutput, errorLog,
-    )
-    defer self.dropPeer(connectedUid)
-
-    // N.B. It is important that the ack is the first thing sent on this connection before releasing
-    // the mutex and allowing subsequent data streaming.
-    if info != nil {
-        err := sendHandshakeAck(streamOutput, ack)
-        if err != nil {
-            log.Println(err)
-        }
-    }
-
-    if len(ack.redirectTo) == 0 {
-        self.connectedPeers[connectedUid] = ConnectedPeer { connectedUid, streamOutput, errorLog }
-    }
-
-    self.mutex.Unlock()
-
-    return <-errorLog
-}
-
-func (self *Multiplexer) driveServer(listener net.Listener) {
     for {
         if conn, err := listener.Accept(); err != nil {
             log.Println(err)
@@ -122,7 +78,52 @@ func (self *Multiplexer) driveServer(listener net.Listener) {
     }
 }
 
-func (self *Multiplexer) handleConnection(conn net.Conn) {
+func (self *Server) sendData(data []byte) {
+    self.mutex.Lock()
+    defer self.mutex.Unlock()
+
+    self.connectedPeers.sendDataLocked(data)
+}
+
+func (self *Server) driveDataStream(streamSource io.Reader) {
+    readBuffer := make([]byte, ReadBufferSize)
+
+    for {
+        bytesRead, err := streamSource.Read(readBuffer)
+        if err != nil {
+            log.Println(err)
+            return
+        }
+
+        self.sendData(readBuffer[:bytesRead])
+    }
+}
+
+func (self *Server) redirectPeerOrConnect(
+    info *HandshakeInfo, streamOutput io.Writer, errorLog chan error,
+) {
+    self.mutex.Lock()
+    defer self.mutex.Unlock()
+
+    connectedUid, ack := self.remotePeers.redirectPeerOrConnectLocked(info)
+
+    // N.B. It is important that the ack is the first thing sent on this connection before releasing
+    // the mutex which would allow subsequent data streaming.
+    if info != nil {
+        err := sendHandshakeAck(streamOutput, ack)
+        if err != nil {
+            log.Println(err)
+        }
+    }
+
+    if len(ack.redirectTo) == 0 {
+        self.connectedPeers.registerConnectionLocked(connectedUid, streamOutput, errorLog)
+    } else {
+        errorLog <- errors.New("Redirect to: " + ack.redirectTo[AB].peerListeningOn)
+    }
+}
+
+func (self *Server) handleConnection(conn net.Conn) {
     defer conn.Close()
 
     info, err := receiveHandshake(conn)
@@ -131,45 +132,15 @@ func (self *Multiplexer) handleConnection(conn net.Conn) {
         return
     }
 
-    log.Println(self.redirectPeerOrWaitForError(info, conn))
+    errorLog := make(chan error, 1)
+    self.redirectPeerOrConnect(info, conn, errorLog)
+    err = <-errorLog
+    log.Println(err)
 }
 
-func runDiscovery(info HandshakeInfo, host string) (net.Conn){
-    conn, err := net.Dial("tcp", host)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    if err := sendHandshake(conn, info); err != nil {
-        log.Fatal(err)
-    }
-
-    ack, err := receiveHandshakeAck(conn)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    if len(ack.redirectTo) == 0 {
-        return conn
-    } else {
-        conn.Close()
-        return runDiscovery(info, ack.redirectTo[AB].peerListeningOn)
-    }
-}
-
-func RunPeer(streamOutput io.Writer, options PeerOptions) {
-    listener, err := net.Listen("tcp", options.ListenAddress)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    defer listener.Close()
-
-    info := HandshakeInfo { AB, options.ListenAddress }
-    conn := runDiscovery(info, options.CoordinatorAddress)
-
-    multiplexer := newMultiplexer()
-    go multiplexer.driveDataStream(conn)
-    go multiplexer.driveServer(listener)
-    log.Fatal(multiplexer.redirectPeerOrWaitForError(nil, streamOutput))
+func (self *Server) runLocalPeer(streamOutput io.Writer) {
+    errorLog := make(chan error, 1)
+    self.redirectPeerOrConnect(nil, streamOutput, errorLog)
+    err := <-errorLog
+    log.Println(err)
 }

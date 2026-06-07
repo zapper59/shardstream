@@ -1,9 +1,11 @@
 package shardstream
 
 import (
-    "errors"
-    "io"
+    "log"
+    "net"
 )
+
+const BranchingFactor = 2 // The number of non-local peers to allow before sending redirects.
 
 type RemotePeer struct {
     UID uint64
@@ -24,7 +26,7 @@ func (self *RemotePeerTable) dropPeerLocked(uid uint64) {
     delete(self.remotePeers, uid)
 }
 
-func (self *RemotePeerTable) computeRedirectLocked() (HandshakeAck, string) {
+func (self *RemotePeerTable) computeRedirectLocked() (HandshakeAck) {
     ack := HandshakeAck { make(map[ShardData]HandshakeInfo) }
 
     minChildPeers := MaxUint64
@@ -42,7 +44,7 @@ func (self *RemotePeerTable) computeRedirectLocked() (HandshakeAck, string) {
     self.remotePeers[optimalPeerUID] = tempPeer
 
     ack.redirectTo[AB] = HandshakeInfo { AB, optimalPeerAddress }
-    return ack, optimalPeerAddress
+    return ack
 }
 
 func (self *RemotePeerTable) connectPeerLocked(info *HandshakeInfo) (uint64) {
@@ -60,21 +62,41 @@ func (self *RemotePeerTable) connectPeerLocked(info *HandshakeInfo) (uint64) {
     return connectedUid
 }
 
-func (self *RemotePeerTable) redirectOrConnectPeerLocked(
-    info *HandshakeInfo, streamOutput io.Writer, peerErrorLog chan error,
+func (self *RemotePeerTable) redirectPeerOrConnectLocked(
+    info *HandshakeInfo,
 ) (uint64, HandshakeAck) {
     connectedUid := MaxUint64
-
-    remotePeers := len(self.remotePeers)
     ack := HandshakeAck { make(map[ShardData]HandshakeInfo) }
 
+    remotePeers := len(self.remotePeers)
     if info != nil && remotePeers >= BranchingFactor {
-        redirectAck, optimalPeerAddress := self.computeRedirectLocked()
-        ack = redirectAck
-        peerErrorLog <- errors.New("Redirect to: " + optimalPeerAddress)
+        ack = self.computeRedirectLocked()
     } else {
         connectedUid = self.connectPeerLocked(info)
     }
 
     return connectedUid, ack
+}
+
+func runDiscovery(info HandshakeInfo, host string) (net.Conn){
+    conn, err := net.Dial("tcp", host)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    if err := sendHandshake(conn, info); err != nil {
+        log.Fatal(err)
+    }
+
+    ack, err := receiveHandshakeAck(conn)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    if len(ack.redirectTo) == 0 {
+        return conn
+    } else {
+        conn.Close()
+        return runDiscovery(info, ack.redirectTo[AB].peerListeningOn)
+    }
 }
