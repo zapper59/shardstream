@@ -20,13 +20,15 @@ func everyShard(count ShardCount) ShardData {
     return ShardData((1 << count) - 1)
 }
 
-type HandshakeInfo struct {
-    peerListeningOn string
+type ListenAddress string
+
+type Handshake struct {
+    peerListeningOn ListenAddress
 }
 
 type HandshakeAck struct {
     shards ShardCount
-    redirectTo map[ShardData]HandshakeInfo // Empty when no redirect is required.
+    redirectTo map[ShardData]ListenAddress // Empty when no redirect is required.
 }
 
 const MaxUint16 = ^uint16(0)
@@ -37,8 +39,8 @@ type PageData struct {
     data [MaxUint16]byte
 }
 
-func sendHandshake(conn io.Writer, info HandshakeInfo) error {
-    _, err := conn.Write([]byte(info.peerListeningOn))
+func sendListenAddress(conn io.Writer, addr ListenAddress) error {
+    _, err := conn.Write([]byte(addr))
     if err != nil {
         return err
     }
@@ -46,14 +48,27 @@ func sendHandshake(conn io.Writer, info HandshakeInfo) error {
     return err
 }
 
-func receiveHandshake(conn io.Reader) (*HandshakeInfo, error) {
+func receiveListenAddress(conn io.Reader) (*ListenAddress, error) {
     peerListeningOn, err := bufio.NewReader(conn).ReadString(0)
     if err != nil {
         return nil, err
     }
     peerListeningOn = strings.TrimRight(peerListeningOn, "\x00")
-    info := &HandshakeInfo { peerListeningOn }
-    return info, nil
+    addr := ListenAddress(peerListeningOn)
+    return &addr, nil
+}
+
+func sendHandshake(conn io.Writer, info Handshake) error {
+    return sendListenAddress(conn, info.peerListeningOn)
+}
+
+func receiveHandshake(conn io.Reader) (*Handshake, error) {
+    addr, err := receiveListenAddress(conn)
+    if err != nil {
+        return nil, err
+    }
+
+    return &Handshake{ *addr }, nil
 }
 
 func sendHandshakeAck(conn io.Writer, ack HandshakeAck) error {
@@ -70,14 +85,14 @@ func sendHandshakeAck(conn io.Writer, ack HandshakeAck) error {
         return err
     }
 
-    for shardData, info := range ack.redirectTo {
+    for shardData, addr := range ack.redirectTo {
         binary.BigEndian.PutUint64(currentWord, uint64(shardData))
         _, err = conn.Write(currentWord)
         if err != nil {
             return err
         }
 
-        if err := sendHandshake(conn, info); err != nil {
+        if err := sendListenAddress(conn, addr); err != nil {
             return err
         }
     }
@@ -97,19 +112,19 @@ func receiveHandshakeAck(conn io.Reader) (*HandshakeAck, error) {
     }
     redirectToLen := binary.BigEndian.Uint64(currentWord)
 
-    ack := HandshakeAck { ShardCount(shards), make(map[ShardData]HandshakeInfo) }
+    ack := HandshakeAck { ShardCount(shards), make(map[ShardData]ListenAddress) }
     for i := 0; uint64(i) < redirectToLen; i++ {
         if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
             return nil, err
         }
         shardData := binary.BigEndian.Uint64(currentWord)
 
-        info, err := receiveHandshake(conn)
+        addr, err := receiveListenAddress(conn)
         if err != nil {
             return nil, err
         }
 
-        ack.redirectTo[ShardData(shardData)] = *info
+        ack.redirectTo[ShardData(shardData)] = *addr
     }
 
     return &ack, nil

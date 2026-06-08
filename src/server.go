@@ -38,7 +38,7 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
         log.Fatal(err)
     }
 
-    info := HandshakeInfo { options.ListenAddress }
+    info := Handshake { ListenAddress(options.ListenAddress) }
     conn, shards := runDiscovery(info, options.CoordinatorAddress)
 
     server := newServer(shards)
@@ -103,7 +103,7 @@ func (self *Server) driveDataStream(streamSource iter.Seq2[*PageData, error]) {
 }
 
 func (self *Server) redirectPeerOrConnect(
-    info HandshakeInfo, streamOutput io.Writer, errorLog chan error,
+    info Handshake, streamOutput io.Writer, errorLog chan error,
 ) (uint64) {
     self.mutex.Lock()
     defer self.mutex.Unlock()
@@ -122,7 +122,7 @@ func (self *Server) redirectPeerOrConnect(
         self.connectedPeers.registerConnectionLocked(connectedUid, &writer, errorLog)
     } else {
         redirectShardData := everyShard(ack.shards)
-        errorLog <- errors.New("Redirect to: " + ack.redirectTo[redirectShardData].peerListeningOn)
+        errorLog <- errors.New("Redirect to: " + string(ack.redirectTo[redirectShardData]))
     }
 
     return connectedUid
