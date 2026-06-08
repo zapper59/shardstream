@@ -3,6 +3,7 @@ package shardstream
 import (
     "errors"
     "io"
+    "iter"
     "log"
     "net"
     "sync"
@@ -23,7 +24,7 @@ func RunCoordinator(streamSource io.Reader, listenAddress string) {
 
     server := newServer()
     go server.driveServer(listener)
-    server.driveDataStream(streamSource)
+    server.driveDataStream(newPaginator(streamSource))
 }
 
 func RunPeer(streamOutput io.Writer, options PeerOptions) {
@@ -38,7 +39,7 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
     server := newServer()
     go server.runLocalPeer(streamOutput)
     go server.driveServer(listener)
-    server.driveDataStream(conn)
+    server.driveDataStream(newPageReader(conn))
 }
 
 type Server struct {
@@ -78,24 +79,21 @@ func (self *Server) driveServer(listener net.Listener) {
     }
 }
 
-func (self *Server) sendData(data []byte) {
+func (self *Server) sendData(data PageData) {
     self.mutex.Lock()
     defer self.mutex.Unlock()
 
     self.connectedPeers.sendDataLocked(data)
 }
 
-func (self *Server) driveDataStream(streamSource io.Reader) {
-    readBuffer := make([]byte, ReadBufferSize)
-
-    for {
-        bytesRead, err := streamSource.Read(readBuffer)
+func (self *Server) driveDataStream(streamSource iter.Seq2[*PageData, error]) {
+    for page, err := range streamSource {
         if err != nil {
             log.Println(err)
             return
         }
 
-        self.sendData(readBuffer[:bytesRead])
+        self.sendData(*page)
     }
 }
 
@@ -115,7 +113,8 @@ func (self *Server) redirectPeerOrConnect(
     }
 
     if len(ack.redirectTo) == 0 {
-        self.connectedPeers.registerConnectionLocked(connectedUid, streamOutput, errorLog)
+        writer := newPageSerializer(streamOutput)
+        self.connectedPeers.registerConnectionLocked(connectedUid, &writer, errorLog)
     } else {
         errorLog <- errors.New("Redirect to: " + ack.redirectTo[AB].peerListeningOn)
     }
@@ -144,7 +143,8 @@ func (self *Server) connectLocalPeer(streamOutput io.Writer, errorLog chan error
     defer self.mutex.Unlock()
 
     connectedUid := MaxUint64
-    self.connectedPeers.registerConnectionLocked(connectedUid, streamOutput, errorLog)
+    writer := newDepaginator(streamOutput)
+    self.connectedPeers.registerConnectionLocked(connectedUid, &writer, errorLog)
     return connectedUid
 }
 
