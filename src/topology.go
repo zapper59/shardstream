@@ -47,29 +47,27 @@ func (self *RemotePeerTable) computeRedirectLocked() (HandshakeAck) {
     return ack
 }
 
-func (self *RemotePeerTable) connectPeerLocked(info *HandshakeInfo) (uint64) {
+func (self *RemotePeerTable) connectPeerLocked(info HandshakeInfo) (uint64) {
     self.peerUIDAllocator += 1
     connectedUid := self.peerUIDAllocator
 
-    if info != nil {
-        self.remotePeers[connectedUid] = RemotePeer {
-            0, // Start with no childPeers.
-            connectedUid,
-            *info,
-        }
+    self.remotePeers[connectedUid] = RemotePeer {
+        0, // Start with no childPeers.
+        connectedUid,
+        info,
     }
 
     return connectedUid
 }
 
 func (self *RemotePeerTable) redirectPeerOrConnectLocked(
-    info *HandshakeInfo,
+    info HandshakeInfo,
 ) (uint64, HandshakeAck) {
     connectedUid := MaxUint64
     ack := HandshakeAck { make(map[ShardData]HandshakeInfo) }
 
     remotePeers := len(self.remotePeers)
-    if info != nil && remotePeers >= BranchingFactor {
+    if remotePeers >= BranchingFactor {
         ack = self.computeRedirectLocked()
     } else {
         connectedUid = self.connectPeerLocked(info)

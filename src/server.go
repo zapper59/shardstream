@@ -100,8 +100,8 @@ func (self *Server) driveDataStream(streamSource io.Reader) {
 }
 
 func (self *Server) redirectPeerOrConnect(
-    info *HandshakeInfo, streamOutput io.Writer, errorLog chan error,
-) {
+    info HandshakeInfo, streamOutput io.Writer, errorLog chan error,
+) (uint64) {
     self.mutex.Lock()
     defer self.mutex.Unlock()
 
@@ -109,11 +109,9 @@ func (self *Server) redirectPeerOrConnect(
 
     // N.B. It is important that the ack is the first thing sent on this connection before releasing
     // the mutex which would allow subsequent data streaming.
-    if info != nil {
-        err := sendHandshakeAck(streamOutput, ack)
-        if err != nil {
-            log.Println(err)
-        }
+    err := sendHandshakeAck(streamOutput, ack)
+    if err != nil {
+        log.Println(err)
     }
 
     if len(ack.redirectTo) == 0 {
@@ -121,6 +119,8 @@ func (self *Server) redirectPeerOrConnect(
     } else {
         errorLog <- errors.New("Redirect to: " + ack.redirectTo[AB].peerListeningOn)
     }
+
+    return connectedUid
 }
 
 func (self *Server) handleConnection(conn net.Conn) {
@@ -133,14 +133,25 @@ func (self *Server) handleConnection(conn net.Conn) {
     }
 
     errorLog := make(chan error, 1)
-    self.redirectPeerOrConnect(info, conn, errorLog)
+    connectedUid := self.redirectPeerOrConnect(*info, conn, errorLog)
+    defer self.dropPeer(connectedUid)
     err = <-errorLog
     log.Println(err)
 }
 
+func (self *Server) connectLocalPeer(streamOutput io.Writer, errorLog chan error) (uint64) {
+    self.mutex.Lock()
+    defer self.mutex.Unlock()
+
+    connectedUid := MaxUint64
+    self.connectedPeers.registerConnectionLocked(connectedUid, streamOutput, errorLog)
+    return connectedUid
+}
+
 func (self *Server) runLocalPeer(streamOutput io.Writer) {
     errorLog := make(chan error, 1)
-    self.redirectPeerOrConnect(nil, streamOutput, errorLog)
+    connectedUid := self.connectLocalPeer(streamOutput, errorLog)
+    defer self.dropPeer(connectedUid)
     err := <-errorLog
     log.Println(err)
 }
