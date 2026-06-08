@@ -20,7 +20,11 @@ func main() {
 
     if parsedArgs.coordinatorCommand.Happened() {
         stdin := bufio.NewReader(os.Stdin)
-        shardstream.RunCoordinator(stdin, parsedArgs.listenAddress)
+        shards := shardstream.ShardCount(1)
+        shardstream.RunCoordinator(
+            stdin,
+            shardstream.CoordinatorOptions{ shards, parsedArgs.listenAddress },
+        )
     } else if parsedArgs.peerCommand.Happened() {
         shardstream.RunPeer(
             os.Stdout,

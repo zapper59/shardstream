@@ -9,6 +9,11 @@ import (
     "sync"
 )
 
+type CoordinatorOptions struct {
+    Shards ShardCount
+    ListenAddress string
+}
+
 type PeerOptions struct {
     ListenAddress string
     CoordinatorAddress string
@@ -16,13 +21,13 @@ type PeerOptions struct {
 
 const MaxUint64 = ^uint64(0)
 
-func RunCoordinator(streamSource io.Reader, listenAddress string) {
-    listener, err := net.Listen("tcp", listenAddress)
+func RunCoordinator(streamSource io.Reader, options CoordinatorOptions) {
+    listener, err := net.Listen("tcp", options.ListenAddress)
     if err != nil {
         log.Fatal(err)
     }
 
-    server := newServer()
+    server := newServer(options.Shards)
     go server.driveServer(listener)
     server.driveDataStream(newPaginator(streamSource))
 }
@@ -33,10 +38,10 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
         log.Fatal(err)
     }
 
-    info := HandshakeInfo { AB, options.ListenAddress }
-    conn := runDiscovery(info, options.CoordinatorAddress)
+    info := HandshakeInfo { options.ListenAddress }
+    conn, shards := runDiscovery(info, options.CoordinatorAddress)
 
-    server := newServer()
+    server := newServer(shards)
     go server.runLocalPeer(streamOutput)
     go server.driveServer(listener)
     server.driveDataStream(newPageReader(conn))
@@ -45,13 +50,13 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
 type Server struct {
     mutex sync.Mutex
 
-    remotePeers RemotePeerTable
-    connectedPeers Multiplexer
+    remotePeers RemotePeerTable //< Mutex
+    connectedPeers Multiplexer //< Mutex
 }
 
-func newServer() (Server) {
+func newServer(shards ShardCount) (Server) {
     return Server {
-        remotePeers: newRemotePeerTable(),
+        remotePeers: newRemotePeerTable(shards),
         connectedPeers: newMultiplexer(),
     }
 }
@@ -116,7 +121,8 @@ func (self *Server) redirectPeerOrConnect(
         writer := newPageSerializer(streamOutput)
         self.connectedPeers.registerConnectionLocked(connectedUid, &writer, errorLog)
     } else {
-        errorLog <- errors.New("Redirect to: " + ack.redirectTo[AB].peerListeningOn)
+        redirectShardData := everyShard(ack.shards)
+        errorLog <- errors.New("Redirect to: " + ack.redirectTo[redirectShardData].peerListeningOn)
     }
 
     return connectedUid

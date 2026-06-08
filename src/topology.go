@@ -5,8 +5,6 @@ import (
     "net"
 )
 
-const BranchingFactor = 2 // The number of non-local peers to allow before sending redirects.
-
 type RemotePeer struct {
     UID uint64
     childPeers uint64
@@ -14,12 +12,19 @@ type RemotePeer struct {
 }
 
 type RemotePeerTable struct {
+    shardsInStream ShardCount
+    shardsToServe ShardCount
     peerUIDAllocator uint64
     remotePeers map[uint64]RemotePeer
 }
 
-func newRemotePeerTable() (RemotePeerTable) {
-    return RemotePeerTable {0, make(map[uint64]RemotePeer)}
+func newRemotePeerTable(shardsInStream ShardCount) (RemotePeerTable) {
+    return RemotePeerTable {
+        shardsInStream,
+        shardsInStream + 1,
+        0,
+        make(map[uint64]RemotePeer),
+    }
 }
 
 func (self *RemotePeerTable) dropPeerLocked(uid uint64) {
@@ -27,7 +32,7 @@ func (self *RemotePeerTable) dropPeerLocked(uid uint64) {
 }
 
 func (self *RemotePeerTable) computeRedirectLocked() (HandshakeAck) {
-    ack := HandshakeAck { make(map[ShardData]HandshakeInfo) }
+    ack := HandshakeAck { self.shardsInStream, make(map[ShardData]HandshakeInfo) }
 
     minChildPeers := MaxUint64
     optimalPeerAddress := "invalid_hostname"
@@ -43,7 +48,7 @@ func (self *RemotePeerTable) computeRedirectLocked() (HandshakeAck) {
     tempPeer.childPeers += 1
     self.remotePeers[optimalPeerUID] = tempPeer
 
-    ack.redirectTo[AB] = HandshakeInfo { AB, optimalPeerAddress }
+    ack.redirectTo[everyShard(self.shardsInStream)] = HandshakeInfo { optimalPeerAddress }
     return ack
 }
 
@@ -64,10 +69,10 @@ func (self *RemotePeerTable) redirectPeerOrConnectLocked(
     info HandshakeInfo,
 ) (uint64, HandshakeAck) {
     connectedUid := MaxUint64
-    ack := HandshakeAck { make(map[ShardData]HandshakeInfo) }
+    ack := HandshakeAck { self.shardsInStream, make(map[ShardData]HandshakeInfo) }
 
-    remotePeers := len(self.remotePeers)
-    if remotePeers >= BranchingFactor {
+    remoteShards := len(self.remotePeers)
+    if uint64(remoteShards) >= uint64(self.shardsToServe) {
         ack = self.computeRedirectLocked()
     } else {
         connectedUid = self.connectPeerLocked(info)
@@ -76,7 +81,7 @@ func (self *RemotePeerTable) redirectPeerOrConnectLocked(
     return connectedUid, ack
 }
 
-func runDiscovery(info HandshakeInfo, host string) (net.Conn){
+func runDiscovery(info HandshakeInfo, host string) (net.Conn, ShardCount){
     conn, err := net.Dial("tcp", host)
     if err != nil {
         log.Fatal(err)
@@ -92,9 +97,10 @@ func runDiscovery(info HandshakeInfo, host string) (net.Conn){
     }
 
     if len(ack.redirectTo) == 0 {
-        return conn
+        return conn, ack.shards
     } else {
         conn.Close()
-        return runDiscovery(info, ack.redirectTo[AB].peerListeningOn)
+        redirectShardData := everyShard(ack.shards)
+        return runDiscovery(info, ack.redirectTo[redirectShardData].peerListeningOn)
     }
 }

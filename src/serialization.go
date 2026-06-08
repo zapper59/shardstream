@@ -9,16 +9,23 @@ import (
     "sync"
 )
 
-// Handshake metadata indicating which halves of the data stream are involved.
+// Handshake metadata indicating how many slices the data is divided into.
+type ShardCount uint64
+
+// Handshake metadata indicating which slices of the data stream are to be included.
 type ShardData uint64
-const AB ShardData = 3 // Indicates a request for a full data stream. Ie. a non-sharded data source.
+const InitiallyRequestedShardData ShardData = ShardData(MaxUint64)
+
+func everyShard(count ShardCount) ShardData {
+    return ShardData((1 << count) - 1)
+}
 
 type HandshakeInfo struct {
-    shards ShardData
     peerListeningOn string
 }
 
 type HandshakeAck struct {
+    shards ShardCount
     redirectTo map[ShardData]HandshakeInfo // Empty when no redirect is required.
 }
 
@@ -30,15 +37,8 @@ type PageData struct {
     data [MaxUint16]byte
 }
 
-func sendHandshake(conn io.Writer, info HandshakeInfo) (error) {
-    currentWord := make([]byte, 8)
-    binary.BigEndian.PutUint64(currentWord, uint64(info.shards))
-    _, err := conn.Write(currentWord)
-    if err != nil {
-        return err
-    }
-
-    _, err = conn.Write([]byte(info.peerListeningOn))
+func sendHandshake(conn io.Writer, info HandshakeInfo) error {
+    _, err := conn.Write([]byte(info.peerListeningOn))
     if err != nil {
         return err
     }
@@ -47,30 +47,36 @@ func sendHandshake(conn io.Writer, info HandshakeInfo) (error) {
 }
 
 func receiveHandshake(conn io.Reader) (*HandshakeInfo, error) {
-    currentWord := make([]byte, 8)
-    if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
-        return nil, err
-    }
-    shards := binary.BigEndian.Uint64(currentWord)
-
     peerListeningOn, err := bufio.NewReader(conn).ReadString(0)
     if err != nil {
         return nil, err
     }
     peerListeningOn = strings.TrimRight(peerListeningOn, "\x00")
-    info := &HandshakeInfo { ShardData(shards), peerListeningOn }
+    info := &HandshakeInfo { peerListeningOn }
     return info, nil
 }
 
-func sendHandshakeAck(conn io.Writer, ack HandshakeAck) (error) {
+func sendHandshakeAck(conn io.Writer, ack HandshakeAck) error {
     currentWord := make([]byte, 8)
-    binary.BigEndian.PutUint64(currentWord, uint64(len(ack.redirectTo)))
+    binary.BigEndian.PutUint64(currentWord, uint64(ack.shards))
     _, err := conn.Write(currentWord)
     if err != nil {
         return err
     }
 
-    for _, info := range ack.redirectTo {
+    binary.BigEndian.PutUint64(currentWord, uint64(len(ack.redirectTo)))
+    _, err = conn.Write(currentWord)
+    if err != nil {
+        return err
+    }
+
+    for shardData, info := range ack.redirectTo {
+        binary.BigEndian.PutUint64(currentWord, uint64(shardData))
+        _, err = conn.Write(currentWord)
+        if err != nil {
+            return err
+        }
+
         if err := sendHandshake(conn, info); err != nil {
             return err
         }
@@ -84,16 +90,26 @@ func receiveHandshakeAck(conn io.Reader) (*HandshakeAck, error) {
     if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
         return nil, err
     }
+    shards := binary.BigEndian.Uint64(currentWord)
+
+    if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+        return nil, err
+    }
     redirectToLen := binary.BigEndian.Uint64(currentWord)
 
-    ack := HandshakeAck { make(map[ShardData]HandshakeInfo) }
+    ack := HandshakeAck { ShardCount(shards), make(map[ShardData]HandshakeInfo) }
     for i := 0; uint64(i) < redirectToLen; i++ {
+        if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+            return nil, err
+        }
+        shardData := binary.BigEndian.Uint64(currentWord)
+
         info, err := receiveHandshake(conn)
         if err != nil {
             return nil, err
         }
 
-        ack.redirectTo[info.shards] = *info
+        ack.redirectTo[ShardData(shardData)] = *info
     }
 
     return &ack, nil
