@@ -1,0 +1,63 @@
+<svg height="600" width="600" xmlns="http://www.w3.org/2000/svg">
+<title>Your Diagram Title</title>
+<!-- Generated with SankeyMATIC: 6/11/2026, 3:29:49 AM -->
+<rect height="600" width="600" fill="#ffffff"></rect>
+<g transform="translate(211.5,18)">
+<g id="sankey_flows">
+<path id="flow0" d="M12 293.78728C48.09211 293.78728 38.13567 244.28106 74.22778 244.28106" fill="none" stroke-width="3.795" stroke="#800080" opacity="0.8"><title>Coordinator → P1: 2</title></path>
+<path id="flow1" d="M86.22778 242.38356C122.31989 242.38356 112.36344 204.89835 148.45555 204.89835" fill="none" stroke-width="3.795" stroke="#800080" opacity="0.8"><title>P1 → P2: 2</title></path>
+<path id="flow4" d="M160.45555 203.00085C196.54766 203.00085 186.59122 128.53895 222.68333 128.53895" fill="none" stroke-width="3.795" stroke="#800080" opacity="0.8"><title>P2 → P4: 2</title></path>
+<path id="flow7" d="M160.45555 359.2569C196.54766 359.2569 186.59122 433.46105 222.68333 433.46105" fill="none" stroke-width="3.795" stroke="#800080" opacity="0.8"><title>P3 → P6: 2</title></path>
+<path id="flow2" d="M12 296.63353C91.14422 296.63353 69.31133 358.30815 148.45555 358.30815" fill="none" stroke-width="1.8975" stroke="#F00000" opacity="0.8"><title>Coordinator → P3: 1</title></path>
+<path id="flow3" d="M86.22778 245.22981C122.31989 245.22981 112.36344 356.41065 148.45555 356.41065" fill="none" stroke-width="1.8975" stroke="#0000F0" opacity="0.8"><title>P1 → P3: 1</title></path>
+<path id="flow5" d="M160.45555 205.8471C196.54766 205.8471 186.59122 280.05125 222.68333 280.05125" fill="none" stroke-width="1.8975" stroke="#F00000" opacity="0.8"><title>P2 → P5: 1</title></path>
+<path id="flow6" d="M160.45555 356.41065C196.54766 356.41065 186.59122 281.94875 222.68333 281.94875" fill="none" stroke-width="1.8975" stroke="#0000F0" opacity="0.8"><title>P3 → P5: 1</title></path>
+</g>
+<g id="sankey_nodes">
+<g class="node">
+<rect id="r0" class="for_r0" x="0" y="291.88978" height="5.6925" width="12" fill="#888888" fill-opacity="1"><title>Coordinator:
+3</title></rect>
+</g>
+<g class="node">
+<rect id="r1" class="for_r1" x="74.22778" y="240.48606" height="5.6925" width="12" fill="#888888" fill-opacity="1"><title>P1:
+3</title></rect>
+</g>
+<g class="node">
+<rect id="r2" class="for_r2" x="148.45555" y="201.10335" height="5.6925" width="12" fill="#888888" fill-opacity="1"><title>P2:
+3</title></rect>
+</g>
+<g class="node">
+<rect id="r3" class="for_r3" x="148.45555" y="355.4619" height="5.6925" width="12" fill="#888888" fill-opacity="1"><title>P3:
+3</title></rect>
+</g>
+<g class="node">
+<rect id="r4" class="for_r4" x="222.68333" y="126.64145" height="3.795" width="12" fill="#888888" fill-opacity="1"><title>P4:
+2</title></rect>
+</g>
+<g class="node">
+<rect id="r5" class="for_r5" x="222.68333" y="279.1025" height="3.795" width="12" fill="#888888" fill-opacity="1"><title>P5:
+2</title></rect>
+</g>
+<g class="node">
+<rect id="r6" class="for_r6" x="222.68333" y="431.56355" height="3.795" width="12" fill="#888888" fill-opacity="1"><title>P6:
+2</title></rect>
+</g>
+</g>
+<g id="sankey_labels" font-family="sans-serif" font-size="16px" fill="#000000">
+<text text-anchor="middle" x="88.5" y="577" font-size="12px" font-weight="400" fill="#336781">Made at SankeyMATIC.com</text>
+<rect id="label0_bg" class="for_r0" x="-86.49999" y="282.93603" width="84.63334" height="22.4" rx="4" fill="#fff" fill-opacity="0.75" stroke="none" stroke-width="0" stroke-opacity="0"></rect>
+<text id="label0" class="for_r0" text-anchor="end" x="-6.53333" y="294.73603" font-weight="400" font-size="14.4px" dy="5.6">Coordinator</text>
+<rect id="label1_bg" class="for_r1" x="66.75278" y="231.53231" width="26.95" height="22.4" rx="4" fill="#fff" fill-opacity="0.75" stroke="none" stroke-width="0" stroke-opacity="0"></rect>
+<text id="label1" class="for_r1" text-anchor="middle" x="80.22778" y="243.33231" font-weight="400" font-size="14.4px" dy="5.6">P1</text>
+<rect id="label2_bg" class="for_r2" x="140.98055" y="192.14961" width="26.95" height="22.4" rx="4" fill="#fff" fill-opacity="0.75" stroke="none" stroke-width="0" stroke-opacity="0"></rect>
+<text id="label2" class="for_r2" text-anchor="middle" x="154.45555" y="203.9496" font-weight="400" font-size="14.4px" dy="5.6">P2</text>
+<rect id="label3_bg" class="for_r3" x="140.98055" y="346.50814" width="26.95" height="22.4" rx="4" fill="#fff" fill-opacity="0.75" stroke="none" stroke-width="0" stroke-opacity="0"></rect>
+<text id="label3" class="for_r3" text-anchor="middle" x="154.45555" y="358.30815" font-weight="400" font-size="14.4px" dy="5.6">P3</text>
+<rect id="label4_bg" class="for_r4" x="236.54999" y="116.73895" width="26.95" height="22.4" rx="4" fill="#fff" fill-opacity="0.75" stroke="none" stroke-width="0" stroke-opacity="0"></rect>
+<text id="label4" class="for_r4" text-anchor="start" x="241.21666" y="128.53895" font-weight="400" font-size="14.4px" dy="5.6">P4</text>
+<rect id="label5_bg" class="for_r5" x="236.54999" y="269.20001" width="26.95" height="22.4" rx="4" fill="#fff" fill-opacity="0.75" stroke="none" stroke-width="0" stroke-opacity="0"></rect>
+<text id="label5" class="for_r5" text-anchor="start" x="241.21666" y="281" font-weight="400" font-size="14.4px" dy="5.6">P5</text>
+<rect id="label6_bg" class="for_r6" x="236.54999" y="421.66107" width="26.95" height="22.4" rx="4" fill="#fff" fill-opacity="0.75" stroke="none" stroke-width="0" stroke-opacity="0"></rect>
+<text id="label6" class="for_r6" text-anchor="start" x="241.21666" y="433.46105" font-weight="400" font-size="14.4px" dy="5.6">P6</text>
+</g>
+</g></svg>

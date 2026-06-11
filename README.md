@@ -47,27 +47,8 @@ Optional - Transcode the video to h264 to better support stream interruptions:
 
 With a shard-count of 2, each node serves up 3 shards, or 1.5 of the incoming bandwidth. To accomplish this effectively the network distribution tree assumes a tessellation of the following shape:
 
-```
-  ┌───┐
-  │   ├──────┐
-  │ C │      │
-  └─-─┘      │
-    │        │
-  ┌─V─┐      │
-  │   │      │
-  │P1 │─────┐│
-  └───┘     ││
-    │       ││
-  ┌─V─┐    ┌VV─┐
-  │   │    │   │
-  │P2 │──┐┌│P3 │
-  └───┘  ││└───┘
-    │    ││    │
-  ┌─V─┐ ┌VV─┐ ┌V──┐
-  │   │ │   │ │   │
-  │P4 │ │P5 │ │P6 │
-  └───┘ └───┘ └───┘
-```
+![Alt text](./sankeymatic_network_flow.svg)
+<img src="./sankeymatic_network_flow.svg">
 
 In this diagram nodes P1, P2, P4, and P6 all consume a single connection transmitting a data stream of both shards.
 
