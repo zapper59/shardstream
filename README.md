@@ -43,6 +43,39 @@ Optional - Transcode the video to h264 to better support stream interruptions:
 --sout='#transcode{venc=x264{keyint=60,idrint=2},vcodec=h264,samplerate=22050}:duplicate{dst=file{mux=ts,dst='-'},dst=display}'
 ```
 
+## A 1.5 Branching Factor
+
+With a shard-count of 2, each node serves up 3 shards, or 1.5 of the incoming bandwidth. To accomplish this effectively the network distribution tree assumes a tessellation of the following shape:
+
+```
+  ┌───┐
+  │   ├──────┐
+  │ C │      │
+  └─-─┘      │
+    │        │
+  ┌─V─┐      │
+  │   │      │
+  │P1 │─────┐│
+  └───┘     ││
+    │       ││
+  ┌─V─┐    ┌VV─┐
+  │   │    │   │
+  │P2 │──┐┌│P3 │
+  └───┘  ││└───┘
+    │    ││    │
+  ┌─V─┐ ┌VV─┐ ┌V──┐
+  │   │ │   │ │   │
+  │P4 │ │P5 │ │P6 │
+  └───┘ └───┘ └───┘
+```
+
+In this diagram nodes P1, P2, P4, and P6 all consume a single connection transmitting a data stream of both shards.
+
+However, nodes P3 and P5 both take on 2 parents, each of which serve a separate half of the data stream.
+
+This tree structure triples the number of nodes at each layer every three layers deep you transmit.
+That is to say it DOES grow exponentially as layers are added.
+In fact if you model the number of layers required to distribute a stream across 1 million nodes this 1.5 branching factor tree is less than twice as tall as a binary tree of 1 million nodes would be.
 
 ## TODO
 
