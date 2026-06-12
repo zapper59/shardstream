@@ -22,6 +22,10 @@ type PeerOptions struct {
 const MaxUint64 = ^uint64(0)
 
 func RunCoordinator(streamSource io.Reader, options CoordinatorOptions) {
+    if options.Shards < 1 || options.Shards > 2 {
+        log.Fatal("Only a shard count of 1 or 2 are supported.")
+    }
+
     listener, err := net.Listen("tcp", options.ListenAddress)
     if err != nil {
         log.Fatal(err)

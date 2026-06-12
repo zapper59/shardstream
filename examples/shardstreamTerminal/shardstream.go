@@ -10,7 +10,10 @@ import (
 
 type ParsedArgs struct {
     listenAddress string
+
     coordinatorCommand *argparse.Command
+    shardCount *int
+
     peerCommand *argparse.Command
     coordinatorAddress *string
 }
@@ -20,7 +23,7 @@ func main() {
 
     if parsedArgs.coordinatorCommand.Happened() {
         stdin := bufio.NewReader(os.Stdin)
-        shards := shardstream.ShardCount(1)
+        shards := shardstream.ShardCount(*parsedArgs.shardCount)
         shardstream.RunCoordinator(
             stdin,
             shardstream.CoordinatorOptions{ shards, parsedArgs.listenAddress },
@@ -49,6 +52,15 @@ func parseArgs() (ParsedArgs) {
     )
 
     coordinator := parser.NewCommand("coordinator", "Start a root of a broadcast tree.")
+    shardCount := coordinator.Int(
+        "s",
+        "shardCount",
+        &argparse.Options{
+            Required: false, 
+            Default: 1,
+            Help: "The number of shards to split data into. (1 or 2)",
+        },
+    )
 
     peer := parser.NewCommand("peer", "Start a participant in a broadcast tree.")
     coordinatorAddress := peer.String(
@@ -66,6 +78,7 @@ func parseArgs() (ParsedArgs) {
     return ParsedArgs{
         *listenAddress,
         coordinator,
+        shardCount,
         peer,
         coordinatorAddress,
     }
