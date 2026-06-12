@@ -5,6 +5,7 @@ import (
     "encoding/binary"
     "io"
     "iter"
+    "math/bits"
     "strings"
     "sync"
 )
@@ -29,6 +30,10 @@ func (shard ShardData) nextShard(count ShardCount) ShardData{
     }
 
     return ShardData(next)
+}
+
+func (shard ShardData) countShards() ShardCount {
+    return ShardCount(bits.OnesCount64(uint64(shard)))
 }
 
 type ListenAddress string
@@ -120,7 +125,7 @@ func sendHandshakeAck(conn io.Writer, ack HandshakeAck) error {
             return err
         }
     }
-    
+
     binary.BigEndian.PutUint64(
         currentWord,
         uint64(len(ack.nowServing.lastByteByShard)),
@@ -173,7 +178,7 @@ func receiveHandshakeAck(conn io.Reader) (*HandshakeAck, error) {
 
         redirectTo[ShardData(shardData)] = *addr
     }
-    
+
     if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
         return nil, err
     }

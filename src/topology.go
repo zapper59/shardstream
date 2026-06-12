@@ -6,7 +6,7 @@ import (
 )
 
 type RemotePeer struct {
-    UID uint64
+    shards ShardData
     childPeers uint64
     listeningOn ListenAddress
 }
@@ -31,6 +31,16 @@ func (self *RemotePeerTable) dropPeerLocked(uid uint64) {
     delete(self.remotePeers, uid)
 }
 
+func (self *RemotePeerTable) countRemainingBandwidth() ShardCount {
+    remainingBandwidth := self.shardsToServe
+
+    for _, peer := range self.remotePeers {
+        remainingBandwidth -= peer.shards.countShards()
+    }
+
+    return remainingBandwidth
+}
+
 func (self *RemotePeerTable) computeRedirectLocked() RedirectTable {
     redirectTo := make(map[ShardData]ListenAddress)
 
@@ -53,18 +63,18 @@ func (self *RemotePeerTable) computeRedirectLocked() RedirectTable {
 }
 
 func (self *RemotePeerTable) connectPeerLocked(
-    addr ListenAddress,
-) (uint64, ShardData) {
+    addr ListenAddress, shards ShardData,
+) uint64 {
     self.peerUIDAllocator += 1
     connectedUid := self.peerUIDAllocator
 
     self.remotePeers[connectedUid] = RemotePeer {
+        shards,
         0, // Start with no childPeers.
-        connectedUid,
         addr,
     }
 
-    return connectedUid, everyShard(self.shardsInStream)
+    return connectedUid
 }
 
 func (self *RemotePeerTable) redirectPeerOrConnectLocked(
@@ -74,11 +84,13 @@ func (self *RemotePeerTable) redirectPeerOrConnectLocked(
     redirectTo := RedirectTable { make(map[ShardData]ListenAddress) }
     nowServing := NoShards
 
-    remoteShards := len(self.remotePeers)
-    if uint64(remoteShards) >= uint64(self.shardsToServe) {
-        redirectTo = self.computeRedirectLocked()
+    remainingBandwidth := self.countRemainingBandwidth()
+
+    if remainingBandwidth >= self.shardsInStream {
+        nowServing = everyShard(self.shardsInStream)
+        connectedUid = self.connectPeerLocked(info.peerListeningOn, nowServing)
     } else {
-        connectedUid, nowServing = self.connectPeerLocked(info.peerListeningOn)
+        redirectTo = self.computeRedirectLocked()
     }
 
     return connectedUid, redirectTo, nowServing
