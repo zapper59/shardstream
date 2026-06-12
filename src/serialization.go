@@ -15,9 +15,19 @@ type ShardCount uint64
 // Handshake metadata indicating which slices of the data stream are to be included.
 type ShardData uint64
 const InitiallyRequestedShardData ShardData = ShardData(MaxUint64)
+const FirstShard ShardData = ShardData(1)
 
 func everyShard(count ShardCount) ShardData {
     return ShardData((1 << count) - 1)
+}
+
+func (shard ShardData) nextShard(count ShardCount) ShardData{
+    next := uint64(shard) << 1
+    if next >= (1 << count) {
+        return FirstShard
+    }
+
+    return ShardData(next)
 }
 
 type ListenAddress string
@@ -35,6 +45,7 @@ const MaxUint16 = ^uint16(0)
 const ReadBufferSize = MaxUint16
 
 type PageData struct {
+    startingByte uint64
     length uint16
     data [MaxUint16]byte
 }
@@ -139,8 +150,10 @@ var pagePool = sync.Pool{
 // Consume a raw sequence of bytes, producing a series of PageData.
 func newPaginator(conn io.Reader) iter.Seq2[*PageData, error] {
     return func(yield func(*PageData, error) bool) {
+        var startingByte uint64 = 0
         for {
             page := pagePool.Get().(*PageData)
+            page.startingByte = startingByte
 
             bytesRead, err := conn.Read(page.data[:])
             if err != nil {
@@ -148,8 +161,9 @@ func newPaginator(conn io.Reader) iter.Seq2[*PageData, error] {
                 return
             }
 
+            startingByte += (1 + uint64(bytesRead))
             page.length = uint16(bytesRead)
-            if !yield(page, err) {
+            if !yield(page, nil) {
                 return
             }
         }
@@ -160,13 +174,14 @@ func newPaginator(conn io.Reader) iter.Seq2[*PageData, error] {
 func newPageReader(conn io.Reader) iter.Seq2[*PageData, error] {
     return func(yield func(*PageData, error) bool) {
         for {
-            lengthBytes := make([]byte, 2)
-            if _, err := io.ReadAtLeast(conn, lengthBytes, 2); err != nil {
+            pageHeader := make([]byte, 10)
+            if _, err := io.ReadAtLeast(conn, pageHeader, 10); err != nil {
                 yield(nil, err)
                 return
             }
             page := pagePool.Get().(*PageData)
-            page.length = binary.BigEndian.Uint16(lengthBytes)
+            page.startingByte = binary.BigEndian.Uint64(pageHeader[:8])
+            page.length = binary.BigEndian.Uint16(pageHeader[8:])
 
             _, err := io.ReadAtLeast(conn, page.data[:page.length], int(page.length))
             if err != nil {
@@ -174,7 +189,7 @@ func newPageReader(conn io.Reader) iter.Seq2[*PageData, error] {
                 return
             }
 
-            if !yield(page, err) {
+            if !yield(page, nil) {
                 return
             }
         }
@@ -195,8 +210,9 @@ func newPageSerializer(w io.Writer) PageSerializer {
 }
 
 func (self *PageSerializer) SendPageData(page PageData) error {
-    currentWord := make([]byte, 2)
-    binary.BigEndian.PutUint16(currentWord, page.length)
+    currentWord := make([]byte, 10)
+    binary.BigEndian.PutUint64(currentWord[:8], page.startingByte)
+    binary.BigEndian.PutUint16(currentWord[8:], page.length)
     if _, err := self.w.Write(currentWord); err != nil {
         return err
     }
