@@ -62,7 +62,7 @@ func newServer(shards ShardCount, shardIndices ShardIndices) (Server) {
     return Server {
         shards: shards,
         remotePeers: newRemotePeerTable(shards),
-        connectedPeers: newMultiplexer(shardIndices),
+        connectedPeers: newMultiplexer(shards, shardIndices),
     }
 }
 
@@ -126,7 +126,7 @@ func (self *Server) redirectPeerOrConnect(
     } else {
         redirectShardData := everyShard(self.shards)
         errorLog <- errors.New(
-            "Redirect to: " + 
+            "Redirect to: " +
             string(redirectTable.addressByShard[redirectShardData]),
         )
     }
