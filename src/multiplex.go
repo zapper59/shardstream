@@ -8,11 +8,13 @@ type ConnectedPeer struct {
 
 type Multiplexer struct {
     connectedPeers map[uint64]ConnectedPeer
+    shardIndices ShardIndices
 }
 
-func newMultiplexer() (Multiplexer) {
+func newMultiplexer(shardIndices ShardIndices) (Multiplexer) {
     return Multiplexer {
-        connectedPeers: make(map[uint64]ConnectedPeer),
+        make(map[uint64]ConnectedPeer),
+        shardIndices,
     }
 }
 
@@ -21,6 +23,9 @@ func (self *Multiplexer) dropPeerLocked(uid uint64) {
 }
 
 func (self *Multiplexer) sendDataLocked(data PageData) {
+    self.shardIndices.lastByteByShard[FirstShard] =
+        data.startingByte + uint64(data.length)
+
     for _, peer := range self.connectedPeers {
         if err := peer.streamOutput.SendPageData(data); err != nil {
             peer.errorLog <- err
@@ -29,7 +34,12 @@ func (self *Multiplexer) sendDataLocked(data PageData) {
 }
 
 func (self *Multiplexer) registerConnectionLocked(
-    connectedUid uint64, streamOutput PageWriter, errorLog chan error,
-) {
+    shards ShardData,
+    connectedUid uint64,
+    streamOutput PageWriter,
+    errorLog chan error,
+) ShardIndices {
     self.connectedPeers[connectedUid] = ConnectedPeer { connectedUid, streamOutput, errorLog }
+
+    return self.shardIndices
 }

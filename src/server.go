@@ -27,7 +27,9 @@ func RunCoordinator(streamSource io.Reader, options CoordinatorOptions) {
         log.Fatal(err)
     }
 
-    server := newServer(options.Shards)
+    shardIndices := ShardIndices{ make(map[ShardData]uint64) }
+    shardIndices.lastByteByShard[FirstShard] = 0
+    server := newServer(options.Shards, shardIndices)
     go server.driveServer(listener)
     server.driveDataStream(newPaginator(streamSource))
 }
@@ -39,25 +41,28 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
     }
 
     info := Handshake { ListenAddress(options.ListenAddress) }
-    conn, shards := runDiscovery(info, options.CoordinatorAddress)
+    conn, shards, shardIndices := runDiscovery(info, options.CoordinatorAddress)
 
-    server := newServer(shards)
+    server := newServer(shards, shardIndices)
     go server.runLocalPeer(streamOutput)
     go server.driveServer(listener)
     server.driveDataStream(newPageReader(conn))
 }
 
 type Server struct {
+    shards ShardCount
+
     mutex sync.Mutex
 
     remotePeers RemotePeerTable //< Mutex
     connectedPeers Multiplexer //< Mutex
 }
 
-func newServer(shards ShardCount) (Server) {
+func newServer(shards ShardCount, shardIndices ShardIndices) (Server) {
     return Server {
+        shards: shards,
         remotePeers: newRemotePeerTable(shards),
-        connectedPeers: newMultiplexer(),
+        connectedPeers: newMultiplexer(shardIndices),
     }
 }
 
@@ -108,21 +113,31 @@ func (self *Server) redirectPeerOrConnect(
     self.mutex.Lock()
     defer self.mutex.Unlock()
 
-    connectedUid, ack := self.remotePeers.redirectPeerOrConnectLocked(info)
+    connectedUid, redirectTable, nowServing :=
+        self.remotePeers.redirectPeerOrConnectLocked(info)
+
+
+    shardIndices := ShardIndices{ make(map[ShardData]uint64) }
+    if nowServing != NoShards {
+        writer := newPageSerializer(streamOutput)
+        shardIndices = self.connectedPeers.registerConnectionLocked(
+            nowServing, connectedUid, &writer, errorLog,
+        )
+    } else {
+        redirectShardData := everyShard(self.shards)
+        errorLog <- errors.New(
+            "Redirect to: " + 
+            string(redirectTable.addressByShard[redirectShardData]),
+        )
+    }
+
+    ack := HandshakeAck { self.shards, redirectTable, shardIndices }
 
     // N.B. It is important that the ack is the first thing sent on this connection before releasing
     // the mutex which would allow subsequent data streaming.
     err := sendHandshakeAck(streamOutput, ack)
     if err != nil {
         log.Println(err)
-    }
-
-    if len(ack.redirectTo) == 0 {
-        writer := newPageSerializer(streamOutput)
-        self.connectedPeers.registerConnectionLocked(connectedUid, &writer, errorLog)
-    } else {
-        redirectShardData := everyShard(ack.shards)
-        errorLog <- errors.New("Redirect to: " + string(ack.redirectTo[redirectShardData]))
     }
 
     return connectedUid
@@ -148,9 +163,12 @@ func (self *Server) connectLocalPeer(streamOutput io.Writer, errorLog chan error
     self.mutex.Lock()
     defer self.mutex.Unlock()
 
+    serveAllShards := everyShard(self.shards)
     connectedUid := MaxUint64
     writer := newDepaginator(streamOutput)
-    self.connectedPeers.registerConnectionLocked(connectedUid, &writer, errorLog)
+    self.connectedPeers.registerConnectionLocked(
+        serveAllShards, connectedUid, &writer, errorLog,
+    )
     return connectedUid
 }
 

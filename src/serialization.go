@@ -16,6 +16,7 @@ type ShardCount uint64
 type ShardData uint64
 const InitiallyRequestedShardData ShardData = ShardData(MaxUint64)
 const FirstShard ShardData = ShardData(1)
+const NoShards ShardData = ShardData(0)
 
 func everyShard(count ShardCount) ShardData {
     return ShardData((1 << count) - 1)
@@ -36,9 +37,18 @@ type Handshake struct {
     peerListeningOn ListenAddress
 }
 
+type RedirectTable struct {
+    addressByShard map[ShardData]ListenAddress
+}
+
+type ShardIndices struct {
+    lastByteByShard map[ShardData]uint64
+}
+
 type HandshakeAck struct {
     shards ShardCount
-    redirectTo map[ShardData]ListenAddress // Empty when no redirect is required.
+    redirectTo RedirectTable
+    nowServing ShardIndices
 }
 
 const MaxUint16 = ^uint16(0)
@@ -90,13 +100,16 @@ func sendHandshakeAck(conn io.Writer, ack HandshakeAck) error {
         return err
     }
 
-    binary.BigEndian.PutUint64(currentWord, uint64(len(ack.redirectTo)))
+    binary.BigEndian.PutUint64(
+        currentWord,
+        uint64(len(ack.redirectTo.addressByShard)),
+    )
     _, err = conn.Write(currentWord)
     if err != nil {
         return err
     }
 
-    for shardData, addr := range ack.redirectTo {
+    for shardData, addr := range ack.redirectTo.addressByShard {
         binary.BigEndian.PutUint64(currentWord, uint64(shardData))
         _, err = conn.Write(currentWord)
         if err != nil {
@@ -104,6 +117,29 @@ func sendHandshakeAck(conn io.Writer, ack HandshakeAck) error {
         }
 
         if err := sendListenAddress(conn, addr); err != nil {
+            return err
+        }
+    }
+    
+    binary.BigEndian.PutUint64(
+        currentWord,
+        uint64(len(ack.nowServing.lastByteByShard)),
+    )
+    _, err = conn.Write(currentWord)
+    if err != nil {
+        return err
+    }
+
+    for shardData, lastByte := range ack.nowServing.lastByteByShard {
+        binary.BigEndian.PutUint64(currentWord, uint64(shardData))
+        _, err = conn.Write(currentWord)
+        if err != nil {
+            return err
+        }
+
+        binary.BigEndian.PutUint64(currentWord, uint64(lastByte))
+        _, err = conn.Write(currentWord)
+        if err != nil {
             return err
         }
     }
@@ -123,7 +159,7 @@ func receiveHandshakeAck(conn io.Reader) (*HandshakeAck, error) {
     }
     redirectToLen := binary.BigEndian.Uint64(currentWord)
 
-    ack := HandshakeAck { ShardCount(shards), make(map[ShardData]ListenAddress) }
+    redirectTo := make(map[ShardData]ListenAddress)
     for i := 0; uint64(i) < redirectToLen; i++ {
         if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
             return nil, err
@@ -135,9 +171,34 @@ func receiveHandshakeAck(conn io.Reader) (*HandshakeAck, error) {
             return nil, err
         }
 
-        ack.redirectTo[ShardData(shardData)] = *addr
+        redirectTo[ShardData(shardData)] = *addr
+    }
+    
+    if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+        return nil, err
+    }
+    nowServingLen := binary.BigEndian.Uint64(currentWord)
+
+    nowServing:= make(map[ShardData]uint64)
+    for i := 0; uint64(i) < nowServingLen; i++ {
+        if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+            return nil, err
+        }
+        shardData := binary.BigEndian.Uint64(currentWord)
+
+        if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+            return nil, err
+        }
+        lastByte := binary.BigEndian.Uint64(currentWord)
+
+        nowServing[ShardData(shardData)] = lastByte
     }
 
+    ack := HandshakeAck {
+        ShardCount(shards),
+        RedirectTable { redirectTo },
+        ShardIndices { nowServing },
+    }
     return &ack, nil
 }
 
