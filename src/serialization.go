@@ -80,15 +80,13 @@ func sendListenAddress(conn io.Writer, addr ListenAddress) error {
 
 func receiveListenAddress(conn io.Reader) (*ListenAddress, error) {
     currentWord := make([]byte, 2)
-    if _, err := io.ReadAtLeast(conn, currentWord, 2); err != nil {
+    if _, err := io.ReadFull(conn, currentWord); err != nil {
         return nil, err
     }
     addrLen := binary.BigEndian.Uint16(currentWord)
 
     page := pagePool.Get().(*PageData)
-    if _, err := io.ReadAtLeast(
-        conn, page.data[:addrLen], int(addrLen),
-    ); err != nil {
+    if _, err := io.ReadFull(conn, page.data[:addrLen]); err != nil {
         return nil, err
     }
     peerListeningOn := string(page.data[:addrLen])
@@ -166,19 +164,19 @@ func sendHandshakeAck(conn io.Writer, ack HandshakeAck) error {
 
 func receiveHandshakeAck(conn io.Reader) (*HandshakeAck, error) {
     currentWord := make([]byte, 8)
-    if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+    if _, err := io.ReadFull(conn, currentWord); err != nil {
         return nil, err
     }
     shards := binary.BigEndian.Uint64(currentWord)
 
-    if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+    if _, err := io.ReadFull(conn, currentWord); err != nil {
         return nil, err
     }
     redirectToLen := binary.BigEndian.Uint64(currentWord)
 
     redirectTo := make(map[ShardData]ListenAddress)
     for i := 0; uint64(i) < redirectToLen; i++ {
-        if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+        if _, err := io.ReadFull(conn, currentWord); err != nil {
             return nil, err
         }
         shardData := binary.BigEndian.Uint64(currentWord)
@@ -191,19 +189,19 @@ func receiveHandshakeAck(conn io.Reader) (*HandshakeAck, error) {
         redirectTo[ShardData(shardData)] = *addr
     }
 
-    if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+    if _, err := io.ReadFull(conn, currentWord); err != nil {
         return nil, err
     }
     nowServingLen := binary.BigEndian.Uint64(currentWord)
 
     nowServing:= make(map[ShardData]uint64)
     for i := 0; uint64(i) < nowServingLen; i++ {
-        if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+        if _, err := io.ReadFull(conn, currentWord); err != nil {
             return nil, err
         }
         shardData := binary.BigEndian.Uint64(currentWord)
 
-        if _, err := io.ReadAtLeast(conn, currentWord, 8); err != nil {
+        if _, err := io.ReadFull(conn, currentWord); err != nil {
             return nil, err
         }
         lastByte := binary.BigEndian.Uint64(currentWord)
@@ -253,7 +251,7 @@ func newPageReader(conn io.Reader) iter.Seq2[*PageData, error] {
     return func(yield func(*PageData, error) bool) {
         for {
             pageHeader := make([]byte, 10)
-            if _, err := io.ReadAtLeast(conn, pageHeader, 10); err != nil {
+            if _, err := io.ReadFull(conn, pageHeader); err != nil {
                 yield(nil, err)
                 return
             }
@@ -261,7 +259,7 @@ func newPageReader(conn io.Reader) iter.Seq2[*PageData, error] {
             page.startingByte = binary.BigEndian.Uint64(pageHeader[:8])
             page.length = binary.BigEndian.Uint16(pageHeader[8:])
 
-            _, err := io.ReadAtLeast(conn, page.data[:page.length], int(page.length))
+            _, err := io.ReadFull(conn, page.data[:page.length])
             if err != nil {
                 yield(nil, err)
                 return
