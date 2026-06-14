@@ -18,7 +18,7 @@ func newMultiplexer(shardsInStream ShardCount, shardIndices ShardIndices) (Multi
     bestLastByte := uint64(0)
     bestShard := FirstShard
     for shard, lastByte := range shardIndices.lastByteByShard {
-        if lastByte > bestLastByte {
+        if lastByte >= bestLastByte {
             bestLastByte = lastByte
             bestShard = shard
         }

@@ -2,6 +2,7 @@ package shardstream
 
 import (
     "iter"
+    "log/slog"
 )
 
 type SingleShardStream struct {
@@ -39,6 +40,7 @@ func newTwoShardRecombinator(
 
     return func(yield func(*PageData, error) bool) {
         for {
+            slog.Debug("recieving", "shard", nextShardToRead)
             page, err, ok := incomingStreams[nextShardToRead].next()
             if !ok {
                 return
@@ -47,6 +49,7 @@ func newTwoShardRecombinator(
                 yield(nil, err)
                 return
             }
+            slog.Debug("recv", "shard", nextShardToRead)
 
             tempSingleShard := incomingStreams[nextShardToRead]
             incomingStreams[nextShardToRead] = SingleShardStream {

@@ -43,7 +43,19 @@ func (self *RemotePeerTable) countRemainingBandwidth() ShardCount {
     return remainingBandwidth
 }
 
-func (self *RemotePeerTable) computeRedirectLocked() RedirectTable {
+func (self *RemotePeerTable) countGrandchildren() uint64 {
+    grandchildren := uint64(0)
+
+    for _, peer := range self.remotePeers {
+        grandchildren += peer.childPeers
+    }
+
+    return grandchildren
+}
+
+func (self *RemotePeerTable) computeRedirectLocked(
+    shards ShardData,
+) RedirectTable {
     redirectTo := make(map[ShardData]ListenAddress)
 
     minChildPeers := MaxUint64
@@ -60,7 +72,7 @@ func (self *RemotePeerTable) computeRedirectLocked() RedirectTable {
     tempPeer.childPeers += 1
     self.remotePeers[optimalPeerUID] = tempPeer
 
-    redirectTo[everyShard(self.shardsInStream)] = optimalPeerAddress
+    redirectTo[shards] = optimalPeerAddress
     return RedirectTable { redirectTo }
 }
 
@@ -87,12 +99,33 @@ func (self *RemotePeerTable) redirectPeerOrConnectLocked(
     nowServing := NoShards
 
     remainingBandwidth := self.countRemainingBandwidth()
+    grandchildren := self.countGrandchildren()
+    requestedShards := everyShard(self.shardsInStream) & info.requestedShards
+    requestedShardCount := requestedShards.countShards()
 
-    if remainingBandwidth >= self.shardsInStream {
-        nowServing = everyShard(self.shardsInStream)
+    slog.Debug(
+        "Computing Topology",
+        "bandwidth",
+        remainingBandwidth,
+        "grandchildren",
+        grandchildren,
+        "requestedShards",
+        requestedShards,
+        "requestedShardCount",
+        requestedShardCount,
+    )
+
+    if remainingBandwidth >= requestedShardCount {
+        nowServing = requestedShards
         connectedUid = self.connectPeerLocked(info.peerListeningOn, nowServing)
+    } else if remainingBandwidth == 1 && grandchildren == 0 {
+        nowServing = FirstShard
+        connectedUid = self.connectPeerLocked(info.peerListeningOn, nowServing)
+        redirect := requestedShards - nowServing
+        redirectTo = self.computeRedirectLocked(redirect)
     } else {
-        redirectTo = self.computeRedirectLocked()
+        redirect := requestedShards
+        redirectTo = self.computeRedirectLocked(redirect)
     }
 
     return connectedUid, redirectTo, nowServing
@@ -104,9 +137,26 @@ type DiscoveryTable struct {
     shardIndices ShardIndices
 }
 
-func runDiscovery(info Handshake, host string) DiscoveryTable {
+func combineDiscoveryTables(
+    a DiscoveryTable, b DiscoveryTable,
+) DiscoveryTable {
+    discovery := DiscoveryTable {
+        a.shards,
+        a.parents,
+        a.shardIndices,
+    }
+    for k, v := range b.parents {
+        discovery.parents[k] = v
+    }
+    for k, v := range b.shardIndices.lastByteByShard {
+        discovery.shardIndices.lastByteByShard[k] = v
+    }
+    return discovery
+}
+
+func runDiscovery(info Handshake, host ListenAddress) DiscoveryTable {
     slog.Debug("Dialing", "host", host)
-    conn, err := net.Dial("tcp", host)
+    conn, err := net.Dial("tcp", string(host))
     if err != nil {
         log.Fatal(err)
     }
@@ -131,18 +181,44 @@ func runDiscovery(info Handshake, host string) DiscoveryTable {
     if len(ack.nowServing.lastByteByShard) == 0 {
         conn.Close()
 
-        redirectShardData := everyShard(ack.shards)
-        return runDiscovery(
-            info,
-            string(ack.redirectTo.addressByShard[redirectShardData]),
-        )
+        discovery := DiscoveryTable {
+            ack.shards,
+            make(map[ShardData]io.Reader),
+            ack.nowServing,
+        }
+
+        for _, addr := range ack.redirectTo.addressByShard {
+            discovery = combineDiscoveryTables(
+                discovery, runDiscovery(info, addr),
+            )
+        }
+
+        return discovery
     } else {
         parents := make(map[ShardData]io.Reader)
-        parents[everyShard(ack.shards)] = conn
-        return DiscoveryTable {
+
+        if len(ack.redirectTo.addressByShard) == 0 {
+            all := everyShard(ack.shards) & info.requestedShards
+            parents[all] = conn
+        } else {
+            for shard, _ := range ack.nowServing.lastByteByShard {
+                parents[shard] = conn
+            }
+        }
+
+        discovery := DiscoveryTable {
             ack.shards,
             parents,
             ack.nowServing,
         }
+
+        for shard, addr := range ack.redirectTo.addressByShard {
+            info2 := Handshake{ shard, info.peerListeningOn }
+            discovery = combineDiscoveryTables(
+                discovery, runDiscovery(info2, addr),
+            )
+        }
+
+        return discovery
     }
 }

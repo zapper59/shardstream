@@ -33,7 +33,11 @@ func RunCoordinator(streamSource io.Reader, options CoordinatorOptions) {
     }
 
     shardIndices := ShardIndices{ make(map[ShardData]uint64) }
-    shardIndices.lastByteByShard[FirstShard] = 0
+    s := FirstShard
+    for _ = range options.Shards {
+        shardIndices.lastByteByShard[s] = 0
+        s = s.nextShard(options.Shards)
+    }
     server := newServer(options.Shards, shardIndices)
     go server.driveServer(listener)
     server.driveDataStream(newPaginator(streamSource))
@@ -50,15 +54,27 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
         InitiallyRequestedShardData,
         ListenAddress(options.ListenAddress),
     }
-    discovery := runDiscovery(info, options.CoordinatorAddress)
-    slog.Debug("Discovery completed.")
+    discovery := runDiscovery(info, ListenAddress(options.CoordinatorAddress))
+    slog.Debug("Discovery completed.", "parents", discovery.parents)
 
     server := newServer(discovery.shards, discovery.shardIndices)
     go server.runLocalPeer(streamOutput)
     go server.driveServer(listener)
 
-    conn := discovery.parents[everyShard(discovery.shards)]
-    server.driveDataStream(newPageReader(conn))
+    if len(discovery.parents) == 1 {
+        conn := discovery.parents[everyShard(discovery.shards)]
+        server.driveDataStream(newPageReader(conn))
+    } else if len(discovery.parents) == 2 {
+        a := FirstShard
+        b := a.nextShard(discovery.shards)
+        recombinated := newTwoShardRecombinator(
+            newPageReader(discovery.parents[a]),
+            discovery.shardIndices.lastByteByShard[a],
+            newPageReader(discovery.parents[b]),
+            discovery.shardIndices.lastByteByShard[b],
+        )
+        server.driveDataStream(recombinated)
+    }
 }
 
 type Server struct {
@@ -172,6 +188,7 @@ func (self *Server) handleConnection(conn net.Conn) {
         slog.Debug("Failed to accept handshake", "ERR", err)
         return
     }
+    slog.Debug("Handshake", "hs", info)
 
     errorLog := make(chan error, 1)
     connectedUid := self.redirectPeerOrConnect(*info, conn, errorLog)
