@@ -46,7 +46,10 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
     }
 
     slog.Debug("Beginning discovery.")
-    info := Handshake { ListenAddress(options.ListenAddress) }
+    info := Handshake { 
+        InitiallyRequestedShardData,
+        ListenAddress(options.ListenAddress),
+    }
     conn, shards, shardIndices := runDiscovery(info, options.CoordinatorAddress)
     slog.Debug("Discovery completed.")
 

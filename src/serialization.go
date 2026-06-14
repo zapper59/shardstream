@@ -37,6 +37,7 @@ func (shard ShardData) countShards() ShardCount {
 type ListenAddress string
 
 type Handshake struct {
+    requestedShards ShardData
     peerListeningOn ListenAddress
 }
 
@@ -95,16 +96,31 @@ func receiveListenAddress(conn io.Reader) (*ListenAddress, error) {
 }
 
 func sendHandshake(conn io.Writer, info Handshake) error {
+    currentWord := make([]byte, 8)
+    binary.BigEndian.PutUint64(
+        currentWord, uint64(info.requestedShards),
+    )
+    _, err := conn.Write(currentWord)
+    if err != nil {
+        return err
+    }
+
     return sendListenAddress(conn, info.peerListeningOn)
 }
 
 func receiveHandshake(conn io.Reader) (*Handshake, error) {
+    currentWord := make([]byte, 8)
+    if _, err := io.ReadFull(conn, currentWord); err != nil {
+        return nil, err
+    }
+    requestedShards := ShardData(binary.BigEndian.Uint64(currentWord))
+
     addr, err := receiveListenAddress(conn)
     if err != nil {
         return nil, err
     }
 
-    return &Handshake{ *addr }, nil
+    return &Handshake{ requestedShards, *addr }, nil
 }
 
 func sendHandshakeAck(conn io.Writer, ack HandshakeAck) error {
