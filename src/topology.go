@@ -2,6 +2,7 @@ package shardstream
 
 import (
     "log"
+    "log/slog"
     "net"
 )
 
@@ -99,11 +100,13 @@ func (self *RemotePeerTable) redirectPeerOrConnectLocked(
 func runDiscovery(
     info Handshake, host string,
 ) (net.Conn, ShardCount, ShardIndices){
+    slog.Debug("Dialing", "host", host)
     conn, err := net.Dial("tcp", host)
     if err != nil {
         log.Fatal(err)
     }
 
+    slog.Debug("Begin Handshake")
     if err := sendHandshake(conn, info); err != nil {
         log.Fatal(err)
     }
@@ -112,6 +115,13 @@ func runDiscovery(
     if err != nil {
         log.Fatal(err)
     }
+    slog.Debug(
+        "Ack Received",
+        "redirect",
+        ack.redirectTo.addressByShard,
+        "nowServing",
+        ack.nowServing.lastByteByShard,
+    )
 
     if len(ack.redirectTo.addressByShard) == 0 {
         return conn, ack.shards, ack.nowServing

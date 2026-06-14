@@ -1,12 +1,10 @@
 package shardstream
 
 import (
-    "bufio"
     "encoding/binary"
     "io"
     "iter"
     "math/bits"
-    "strings"
     "sync"
 )
 
@@ -66,20 +64,34 @@ type PageData struct {
 }
 
 func sendListenAddress(conn io.Writer, addr ListenAddress) error {
-    _, err := conn.Write([]byte(addr))
+    currentWord := make([]byte, 2)
+    binary.BigEndian.PutUint16(currentWord, uint16(len(addr)))
+    _, err := conn.Write(currentWord)
     if err != nil {
         return err
     }
-    _, err = conn.Write([]byte{0})
+
+    _, err = conn.Write([]byte(addr))
+    if err != nil {
+        return err
+    }
     return err
 }
 
 func receiveListenAddress(conn io.Reader) (*ListenAddress, error) {
-    peerListeningOn, err := bufio.NewReader(conn).ReadString(0)
-    if err != nil {
+    currentWord := make([]byte, 2)
+    if _, err := io.ReadAtLeast(conn, currentWord, 2); err != nil {
         return nil, err
     }
-    peerListeningOn = strings.TrimRight(peerListeningOn, "\x00")
+    addrLen := binary.BigEndian.Uint16(currentWord)
+
+    page := pagePool.Get().(*PageData)
+    if _, err := io.ReadAtLeast(
+        conn, page.data[:addrLen], int(addrLen),
+    ); err != nil {
+        return nil, err
+    }
+    peerListeningOn := string(page.data[:addrLen])
     addr := ListenAddress(peerListeningOn)
     return &addr, nil
 }

@@ -5,10 +5,12 @@ import (
     "github.com/akamensky/argparse"
     "github.com/zapper59/shardstream"
     "log"
+    "log/slog"
     "os"
 )
 
 type ParsedArgs struct {
+    debugLogging bool
     listenAddress string
 
     coordinatorCommand *argparse.Command
@@ -20,6 +22,10 @@ type ParsedArgs struct {
 
 func main() {
     parsedArgs := parseArgs()
+
+    if parsedArgs.debugLogging {
+        slog.SetLogLoggerLevel(slog.LevelDebug)
+    }
 
     if parsedArgs.coordinatorCommand.Happened() {
         stdin := bufio.NewReader(os.Stdin)
@@ -43,6 +49,8 @@ func parseArgs() (ParsedArgs) {
         "shardstreamTerminal",
         "Start a node to participate in a distributed terminal based broadcast.",
     )
+    debugLogging := parser.Flag("v", "verbose", &argparse.Options{})
+
     listenAddress := parser.String(
         "l",
         "listenAddress",
@@ -76,6 +84,7 @@ func parseArgs() (ParsedArgs) {
     }
 
     return ParsedArgs{
+        *debugLogging,
         *listenAddress,
         coordinator,
         shardCount,

@@ -5,6 +5,7 @@ import (
     "io"
     "iter"
     "log"
+    "log/slog"
     "net"
     "sync"
 )
@@ -44,8 +45,10 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
         log.Fatal(err)
     }
 
+    slog.Debug("Beginning discovery.")
     info := Handshake { ListenAddress(options.ListenAddress) }
     conn, shards, shardIndices := runDiscovery(info, options.CoordinatorAddress)
+    slog.Debug("Discovery completed.")
 
     server := newServer(shards, shardIndices)
     go server.runLocalPeer(streamOutput)
@@ -86,7 +89,7 @@ func (self *Server) driveServer(listener net.Listener) {
 
     for {
         if conn, err := listener.Accept(); err != nil {
-            log.Println(err)
+            slog.Debug("Failed accept", "ERR", err)
         } else {
             go self.handleConnection(conn)
         }
@@ -103,7 +106,7 @@ func (self *Server) sendData(data PageData) {
 func (self *Server) driveDataStream(streamSource iter.Seq2[*PageData, error]) {
     for page, err := range streamSource {
         if err != nil {
-            log.Println(err)
+            log.Fatal(err)
             return
         }
 
@@ -136,12 +139,21 @@ func (self *Server) redirectPeerOrConnect(
     }
 
     ack := HandshakeAck { self.shards, redirectTable, shardIndices }
+    slog.Debug(
+        "Sending Ack",
+        "redirect",
+        ack.redirectTo.addressByShard,
+        "nowServing",
+        ack.nowServing.lastByteByShard,
+    )
+
 
     // N.B. It is important that the ack is the first thing sent on this connection before releasing
     // the mutex which would allow subsequent data streaming.
     err := sendHandshakeAck(streamOutput, ack)
     if err != nil {
-        log.Println(err)
+        slog.Debug("Failed to send ack", "ERR", err)
+        errorLog <- err
     }
 
     return connectedUid
@@ -152,7 +164,7 @@ func (self *Server) handleConnection(conn net.Conn) {
 
     info, err := receiveHandshake(conn)
     if err != nil {
-        log.Println(err)
+        slog.Debug("Failed to accept handshake", "ERR", err)
         return
     }
 
@@ -160,7 +172,7 @@ func (self *Server) handleConnection(conn net.Conn) {
     connectedUid := self.redirectPeerOrConnect(*info, conn, errorLog)
     defer self.dropPeer(connectedUid)
     err = <-errorLog
-    log.Println(err)
+    slog.Debug("Connection Closed", "ERR", err)
 }
 
 func (self *Server) connectLocalPeer(streamOutput io.Writer, errorLog chan error) (uint64) {
@@ -181,5 +193,5 @@ func (self *Server) runLocalPeer(streamOutput io.Writer) {
     connectedUid := self.connectLocalPeer(streamOutput, errorLog)
     defer self.dropPeer(connectedUid)
     err := <-errorLog
-    log.Println(err)
+    slog.Debug("Local Peer Dropped", "ERR", err)
 }
