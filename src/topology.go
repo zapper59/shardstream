@@ -1,6 +1,7 @@
 package shardstream
 
 import (
+    "io"
     "log"
     "log/slog"
     "net"
@@ -97,9 +98,13 @@ func (self *RemotePeerTable) redirectPeerOrConnectLocked(
     return connectedUid, redirectTo, nowServing
 }
 
-func runDiscovery(
-    info Handshake, host string,
-) (net.Conn, ShardCount, ShardIndices){
+type DiscoveryTable struct {
+    shards ShardCount
+    parents map[ShardData]io.Reader
+    shardIndices ShardIndices
+}
+
+func runDiscovery(info Handshake, host string) DiscoveryTable {
     slog.Debug("Dialing", "host", host)
     conn, err := net.Dial("tcp", host)
     if err != nil {
@@ -123,14 +128,21 @@ func runDiscovery(
         ack.nowServing.lastByteByShard,
     )
 
-    if len(ack.redirectTo.addressByShard) == 0 {
-        return conn, ack.shards, ack.nowServing
-    } else {
+    if len(ack.nowServing.lastByteByShard) == 0 {
         conn.Close()
+
         redirectShardData := everyShard(ack.shards)
         return runDiscovery(
             info,
             string(ack.redirectTo.addressByShard[redirectShardData]),
         )
+    } else {
+        parents := make(map[ShardData]io.Reader)
+        parents[everyShard(ack.shards)] = conn
+        return DiscoveryTable {
+            ack.shards,
+            parents,
+            ack.nowServing,
+        }
     }
 }

@@ -50,12 +50,14 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
         InitiallyRequestedShardData,
         ListenAddress(options.ListenAddress),
     }
-    conn, shards, shardIndices := runDiscovery(info, options.CoordinatorAddress)
+    discovery := runDiscovery(info, options.CoordinatorAddress)
     slog.Debug("Discovery completed.")
 
-    server := newServer(shards, shardIndices)
+    server := newServer(discovery.shards, discovery.shardIndices)
     go server.runLocalPeer(streamOutput)
     go server.driveServer(listener)
+
+    conn := discovery.parents[everyShard(discovery.shards)]
     server.driveDataStream(newPageReader(conn))
 }
 
