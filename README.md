@@ -12,6 +12,10 @@ incoming data stream. The two modes are:
 1. One Shard: The tree formed is a standard binary tree with a 2x branching factor. The max required upload bandwith for any particular node is equal to twice that of the incoming data bandwidth.
 2. Two Shards: The tree formed has a branching factor of [1, 2, 1.5] repeating. The max required upload bandwith for any particular node is equal to 1.5x that of the incoming data bandwidth.
 
+## Documentation
+
+See the public docs at (pkg.go.dev)[https://pkg.go.dev/github.com/zapper59/shardstream]
+
 ## shardstreamTerminal
 
 To use the terminal based example, start two processes using the following steps:
