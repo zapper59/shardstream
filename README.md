@@ -74,9 +74,8 @@ In fact if you model the number of layers required to distribute a stream across
 
 ## TODO
 
-1. Shard data streams across nodes without creating cycles. As a peer I would like to consume all shards of the data stream while serving only one slice of the stream to downstream peers.
-2. "loss resistance": As a peer if my upstream node disconnects I would like to be able to reconnect to the network seamlessly without losing data.
-3. RTMP livestreaming module
-4. Ping-based tree construction. As a coordinator I would like the edges of my network to be as short as possible.
-5. "auto-rebalancing": When a large branch of the network fails, the protocol should rebuild the network with knowledge of the depth of the resulting orphaned networks, maintaining minimal network
+1. "loss resistance": As a peer if my upstream node disconnects I would like to be able to reconnect to the network seamlessly without losing data.
+2. RTMP livestreaming module
+3. Ping-based tree construction. As a coordinator I would like the edges of my network to be as short as possible.
+4. "auto-rebalancing": When a large branch of the network fails, the protocol should rebuild the network with knowledge of the depth of the resulting orphaned networks, maintaining minimal network
    depth.
