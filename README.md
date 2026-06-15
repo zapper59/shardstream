@@ -14,7 +14,7 @@ incoming data stream. The two modes are:
 
 ## Documentation
 
-See the public docs at (pkg.go.dev)[https://pkg.go.dev/github.com/zapper59/shardstream]
+See the public docs at [pkg.go.dev](https://pkg.go.dev/github.com/zapper59/shardstream)
 
 ## shardstreamTerminal
 
