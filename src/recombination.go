@@ -5,40 +5,40 @@ import (
     "log/slog"
 )
 
-type SingleShardStream struct {
+type singleShardStream struct {
     lastByte uint64 
-    next func() (*PageData, error, bool)
+    next func() (*pageData, error, bool)
 }
 
 func newTwoShardRecombinator(
-    a iter.Seq2[*PageData, error],
+    a iter.Seq2[*pageData, error],
     aLastByte uint64,
-    b iter.Seq2[*PageData, error],
+    b iter.Seq2[*pageData, error],
     bLastByte uint64,
-) iter.Seq2[*PageData, error] {
+) iter.Seq2[*pageData, error] {
     shardCount := ShardCount(2)
-    aShard := FirstShard
+    aShard := firstShard
     bShard := aShard.nextShard(shardCount)
-    incomingStreams := make(map[ShardData]SingleShardStream)
+    incomingStreams := make(map[shardData]singleShardStream)
 
     aNext, _ := iter.Pull2(a)
-    incomingStreams[aShard] = SingleShardStream {
+    incomingStreams[aShard] = singleShardStream {
         aLastByte, aNext,
     }
     
     bNext, _ := iter.Pull2(b)
-    incomingStreams[bShard] = SingleShardStream {
+    incomingStreams[bShard] = singleShardStream {
         bLastByte, bNext,
     }
 
-    var nextShardToRead ShardData
+    var nextShardToRead shardData
     if bLastByte < aLastByte {
         nextShardToRead = bShard
     } else {
         nextShardToRead = aShard
     }
 
-    return func(yield func(*PageData, error) bool) {
+    return func(yield func(*pageData, error) bool) {
         for {
             slog.Debug("recieving", "shard", nextShardToRead)
             page, err, ok := incomingStreams[nextShardToRead].next()
@@ -52,7 +52,7 @@ func newTwoShardRecombinator(
             slog.Debug("recv", "shard", nextShardToRead)
 
             tempSingleShard := incomingStreams[nextShardToRead]
-            incomingStreams[nextShardToRead] = SingleShardStream {
+            incomingStreams[nextShardToRead] = singleShardStream {
                 page.startingByte + uint64(page.length),
                 tempSingleShard.next,
             }

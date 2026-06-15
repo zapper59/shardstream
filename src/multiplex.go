@@ -1,24 +1,24 @@
 package shardstream
 
-type ConnectedPeer struct {
+type connectedPeer struct {
     UID uint64
-    servingShards ShardData
-    streamOutput PageWriter
+    servingShards shardData
+    streamOutput pageWriter
     errorLog chan error
 }
 
-type Multiplexer struct {
-    connectedPeers map[uint64]ConnectedPeer
+type multiplexer struct {
+    connectedPeers map[uint64]connectedPeer
     shardsInStream ShardCount
-    lastWrittenShard ShardData
-    shardIndices ShardIndices
+    lastWrittenShard shardData
+    shardIndices shardIndices
 }
 
-func newMultiplexer(shardsInStream ShardCount, shardIndices ShardIndices) (Multiplexer) {
+func newMultiplexer(shardsInStream ShardCount, shardIndices shardIndices) (multiplexer) {
     bestLastByte := uint64(0)
-    bestShard := FirstShard
+    bestShard := firstShard
 
-    currShard := FirstShard
+    currShard := firstShard
     for _ = range shardsInStream {
         lastByte := shardIndices.lastByteByShard[currShard]
         if lastByte >= bestLastByte {
@@ -28,19 +28,19 @@ func newMultiplexer(shardsInStream ShardCount, shardIndices ShardIndices) (Multi
         currShard = currShard.nextShard(shardsInStream)
     }
 
-    return Multiplexer {
-        make(map[uint64]ConnectedPeer),
+    return multiplexer {
+        make(map[uint64]connectedPeer),
         shardsInStream,
         bestShard,
         shardIndices,
     }
 }
 
-func (self *Multiplexer) dropPeerLocked(uid uint64) {
+func (self *multiplexer) dropPeerLocked(uid uint64) {
     delete(self.connectedPeers, uid)
 }
 
-func (self *Multiplexer) sendDataLocked(data PageData) {
+func (self *multiplexer) sendDataLocked(data pageData) {
     thisShard := self.lastWrittenShard.nextShard(self.shardsInStream)
     self.shardIndices.lastByteByShard[thisShard] =
         data.startingByte + uint64(data.length)
@@ -48,24 +48,24 @@ func (self *Multiplexer) sendDataLocked(data PageData) {
 
     for _, peer := range self.connectedPeers {
         if thisShard & peer.servingShards != 0 {
-            if err := peer.streamOutput.SendPageData(data); err != nil {
+            if err := peer.streamOutput.sendPageData(data); err != nil {
                 peer.errorLog <- err
             }
         }
     }
 }
 
-func (self *Multiplexer) registerConnectionLocked(
-    servingShards ShardData,
+func (self *multiplexer) registerConnectionLocked(
+    servingShards shardData,
     connectedUid uint64,
-    streamOutput PageWriter,
+    streamOutput pageWriter,
     errorLog chan error,
-) ShardIndices {
-    self.connectedPeers[connectedUid] = ConnectedPeer {
+) shardIndices {
+    self.connectedPeers[connectedUid] = connectedPeer {
         connectedUid, servingShards, streamOutput, errorLog,
     }
 
-    toReturn := ShardIndices{ make(map[ShardData]uint64) }
+    toReturn := shardIndices{ make(map[shardData]uint64) }
     for shard, lastByte := range self.shardIndices.lastByteByShard {
         if shard & servingShards != 0 {
             toReturn.lastByteByShard[shard] = lastByte

@@ -1,3 +1,8 @@
+// Package shardstream defines a protocol for peer-to-peer torrent-like
+// livestreaming.
+// The shardstream protocol is Bittorrent for livestreams. It defines a general
+// purpose framework for streaming data through a tree shaped network built of
+// one Coordinator node and many Peer nodes.
 package shardstream
 
 import (
@@ -10,18 +15,33 @@ import (
     "sync"
 )
 
+// The settings to pass while creating a coordinator node's server.
 type CoordinatorOptions struct {
+    // The number of shards (1 or 2) this cluster will use to communicate.
+    // The branching factor of the distribution tree will be equal 
+    // to Shards + 1
     Shards ShardCount
+
+    // A TCP listen address in the form of that accepted by [net.Listen].
     ListenAddress string
 }
 
+// The settings to pass while creating a peer node's server.
 type PeerOptions struct {
+    // A TCP listen address in the form of that accepted by [net.Listen].
     ListenAddress string
+
+    // The address, in the form of that accepted by [net.Listen], of any node 
+    // in the cluster that you wish to start your search at for inclusion in the
+    // distribution tree. For an optimal distribution tree this should be the
+    // node started using [shardstream.RunCoordinator]
     CoordinatorAddress string
 }
 
-const MaxUint64 = ^uint64(0)
-
+// Start a coordinator node's server, broadcasting the data read from
+// streamSource, which can be any [io.Reader] such as [os.Stdin]. The server will opportunistically perform reads for available
+// data up to 2^16 bytes at a time. On any read error all processes for all
+// nodes in the tree will exit.
 func RunCoordinator(streamSource io.Reader, options CoordinatorOptions) {
     if options.Shards < 1 || options.Shards > 2 {
         log.Fatal("Only a shard count of 1 or 2 are supported.")
@@ -32,8 +52,8 @@ func RunCoordinator(streamSource io.Reader, options CoordinatorOptions) {
         log.Fatal(err)
     }
 
-    shardIndices := ShardIndices{ make(map[ShardData]uint64) }
-    s := FirstShard
+    shardIndices := shardIndices{ make(map[shardData]uint64) }
+    s := firstShard
     for _ = range options.Shards {
         shardIndices.lastByteByShard[s] = 0
         s = s.nextShard(options.Shards)
@@ -43,6 +63,11 @@ func RunCoordinator(streamSource io.Reader, options CoordinatorOptions) {
     server.driveDataStream(newPaginator(streamSource))
 }
 
+// Start a peer node's server, accepting the data stream as discovered from a
+// DFS starting at the specified coordinator. The peer will consume an upload
+// bandwidth equal to the branching factor configured by the coordinator.
+// streamOutput will be handed a copy of the stream being broadcast and can be
+// any [io.Writer] such as [os.Stdout].
 func RunPeer(streamOutput io.Writer, options PeerOptions) {
     listener, err := net.Listen("tcp", options.ListenAddress)
     if err != nil {
@@ -50,8 +75,8 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
     }
 
     slog.Debug("Beginning discovery.")
-    info := Handshake { 
-        InitiallyRequestedShardData,
+    info := handshake { 
+        initiallyRequestedShardData,
         ListenAddress(options.ListenAddress),
     }
     discovery := runDiscovery(info, ListenAddress(options.CoordinatorAddress))
@@ -65,7 +90,7 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
         conn := discovery.parents[everyShard(discovery.shards)]
         server.driveDataStream(newPageReader(conn))
     } else if len(discovery.parents) == 2 {
-        a := FirstShard
+        a := firstShard
         b := a.nextShard(discovery.shards)
         recombinated := newTwoShardRecombinator(
             newPageReader(discovery.parents[a]),
@@ -77,25 +102,25 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
     }
 }
 
-type Server struct {
+type server struct {
     shards ShardCount
 
     mutex sync.Mutex
 
-    remotePeers RemotePeerTable //< Mutex
-    connectedPeers Multiplexer //< Mutex
+    remotePeers remotePeerTable //< Mutex
+    connectedPeers multiplexer //< Mutex
 }
 
-func newServer(shards ShardCount, shardIndices ShardIndices) (Server) {
-    return Server {
+func newServer(shards ShardCount, shardIndices shardIndices) (server) {
+    return server {
         shards: shards,
         remotePeers: newRemotePeerTable(shards),
         connectedPeers: newMultiplexer(shards, shardIndices),
     }
 }
 
-func (self *Server) dropPeer(uid uint64) {
-    if uid == MaxUint64 {
+func (self *server) dropPeer(uid uint64) {
+    if uid == maxUint64 {
         return
     }
 
@@ -105,7 +130,7 @@ func (self *Server) dropPeer(uid uint64) {
     self.mutex.Unlock()
 }
 
-func (self *Server) driveServer(listener net.Listener) {
+func (self *server) driveServer(listener net.Listener) {
     defer listener.Close()
 
     for {
@@ -117,14 +142,14 @@ func (self *Server) driveServer(listener net.Listener) {
     }
 }
 
-func (self *Server) sendData(data PageData) {
+func (self *server) sendData(data pageData) {
     self.mutex.Lock()
     defer self.mutex.Unlock()
 
     self.connectedPeers.sendDataLocked(data)
 }
 
-func (self *Server) driveDataStream(streamSource iter.Seq2[*PageData, error]) {
+func (self *server) driveDataStream(streamSource iter.Seq2[*pageData, error]) {
     for page, err := range streamSource {
         if err != nil {
             log.Fatal(err)
@@ -135,8 +160,8 @@ func (self *Server) driveDataStream(streamSource iter.Seq2[*PageData, error]) {
     }
 }
 
-func (self *Server) redirectPeerOrConnect(
-    info Handshake, streamOutput io.Writer, errorLog chan error,
+func (self *server) redirectPeerOrConnect(
+    info handshake, streamOutput io.Writer, errorLog chan error,
 ) (uint64) {
     self.mutex.Lock()
     defer self.mutex.Unlock()
@@ -145,8 +170,8 @@ func (self *Server) redirectPeerOrConnect(
         self.remotePeers.redirectPeerOrConnectLocked(info)
 
 
-    shardIndices := ShardIndices{ make(map[ShardData]uint64) }
-    if nowServing != NoShards {
+    shardIndices := shardIndices{ make(map[shardData]uint64) }
+    if nowServing != noShards {
         writer := newPageSerializer(streamOutput)
         shardIndices = self.connectedPeers.registerConnectionLocked(
             nowServing, connectedUid, &writer, errorLog,
@@ -159,7 +184,7 @@ func (self *Server) redirectPeerOrConnect(
         )
     }
 
-    ack := HandshakeAck { self.shards, redirectTable, shardIndices }
+    ack := handshakeAck { self.shards, redirectTable, shardIndices }
     slog.Debug(
         "Sending Ack",
         "redirect",
@@ -180,7 +205,7 @@ func (self *Server) redirectPeerOrConnect(
     return connectedUid
 }
 
-func (self *Server) handleConnection(conn net.Conn) {
+func (self *server) handleConnection(conn net.Conn) {
     defer conn.Close()
 
     info, err := receiveHandshake(conn)
@@ -197,12 +222,12 @@ func (self *Server) handleConnection(conn net.Conn) {
     slog.Debug("Connection Closed", "ERR", err)
 }
 
-func (self *Server) connectLocalPeer(streamOutput io.Writer, errorLog chan error) (uint64) {
+func (self *server) connectLocalPeer(streamOutput io.Writer, errorLog chan error) (uint64) {
     self.mutex.Lock()
     defer self.mutex.Unlock()
 
     serveAllShards := everyShard(self.shards)
-    connectedUid := MaxUint64
+    connectedUid := maxUint64
     writer := newDepaginator(streamOutput)
     self.connectedPeers.registerConnectionLocked(
         serveAllShards, connectedUid, &writer, errorLog,
@@ -210,7 +235,7 @@ func (self *Server) connectLocalPeer(streamOutput io.Writer, errorLog chan error
     return connectedUid
 }
 
-func (self *Server) runLocalPeer(streamOutput io.Writer) {
+func (self *server) runLocalPeer(streamOutput io.Writer) {
     errorLog := make(chan error, 1)
     connectedUid := self.connectLocalPeer(streamOutput, errorLog)
     defer self.dropPeer(connectedUid)

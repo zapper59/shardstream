@@ -12,56 +12,58 @@ import (
 type ShardCount uint64
 
 // Handshake metadata indicating which slices of the data stream are to be included.
-type ShardData uint64
-const InitiallyRequestedShardData ShardData = ShardData(MaxUint64)
-const FirstShard ShardData = ShardData(1)
-const NoShards ShardData = ShardData(0)
+type shardData uint64
+const initiallyRequestedShardData shardData = shardData(maxUint64)
+const firstShard shardData = shardData(1)
+const noShards shardData = shardData(0)
 
-func everyShard(count ShardCount) ShardData {
-    return ShardData((1 << count) - 1)
+func everyShard(count ShardCount) shardData {
+    return shardData((1 << count) - 1)
 }
 
-func (shard ShardData) nextShard(count ShardCount) ShardData{
+func (shard shardData) nextShard(count ShardCount) shardData{
     next := uint64(shard) << 1
     if next >= (1 << count) {
-        return FirstShard
+        return firstShard
     }
 
-    return ShardData(next)
+    return shardData(next)
 }
 
-func (shard ShardData) countShards() ShardCount {
+func (shard shardData) countShards() ShardCount {
     return ShardCount(bits.OnesCount64(uint64(shard)))
 }
 
+// A TCP listen address in the form of that accepted by [net.Listen].
 type ListenAddress string
 
-type Handshake struct {
-    requestedShards ShardData
+type handshake struct {
+    requestedShards shardData
     peerListeningOn ListenAddress
 }
 
-type RedirectTable struct {
-    addressByShard map[ShardData]ListenAddress
+type redirectTable struct {
+    addressByShard map[shardData]ListenAddress
 }
 
-type ShardIndices struct {
-    lastByteByShard map[ShardData]uint64
+type shardIndices struct {
+    lastByteByShard map[shardData]uint64
 }
 
-type HandshakeAck struct {
+type handshakeAck struct {
     shards ShardCount
-    redirectTo RedirectTable
-    nowServing ShardIndices
+    redirectTo redirectTable
+    nowServing shardIndices
 }
 
-const MaxUint16 = ^uint16(0)
-const ReadBufferSize = MaxUint16
+const maxUint64 = ^uint64(0)
+const maxUint16 = ^uint16(0)
+const readBufferSize = maxUint16
 
-type PageData struct {
+type pageData struct {
     startingByte uint64
     length uint16
-    data [MaxUint16]byte
+    data [readBufferSize]byte
 }
 
 func sendListenAddress(conn io.Writer, addr ListenAddress) error {
@@ -86,7 +88,7 @@ func receiveListenAddress(conn io.Reader) (*ListenAddress, error) {
     }
     addrLen := binary.BigEndian.Uint16(currentWord)
 
-    page := pagePool.Get().(*PageData)
+    page := pagePool.Get().(*pageData)
     if _, err := io.ReadFull(conn, page.data[:addrLen]); err != nil {
         return nil, err
     }
@@ -95,7 +97,7 @@ func receiveListenAddress(conn io.Reader) (*ListenAddress, error) {
     return &addr, nil
 }
 
-func sendHandshake(conn io.Writer, info Handshake) error {
+func sendHandshake(conn io.Writer, info handshake) error {
     currentWord := make([]byte, 8)
     binary.BigEndian.PutUint64(
         currentWord, uint64(info.requestedShards),
@@ -108,22 +110,22 @@ func sendHandshake(conn io.Writer, info Handshake) error {
     return sendListenAddress(conn, info.peerListeningOn)
 }
 
-func receiveHandshake(conn io.Reader) (*Handshake, error) {
+func receiveHandshake(conn io.Reader) (*handshake, error) {
     currentWord := make([]byte, 8)
     if _, err := io.ReadFull(conn, currentWord); err != nil {
         return nil, err
     }
-    requestedShards := ShardData(binary.BigEndian.Uint64(currentWord))
+    requestedShards := shardData(binary.BigEndian.Uint64(currentWord))
 
     addr, err := receiveListenAddress(conn)
     if err != nil {
         return nil, err
     }
 
-    return &Handshake{ requestedShards, *addr }, nil
+    return &handshake{ requestedShards, *addr }, nil
 }
 
-func sendHandshakeAck(conn io.Writer, ack HandshakeAck) error {
+func sendHandshakeAck(conn io.Writer, ack handshakeAck) error {
     currentWord := make([]byte, 8)
     binary.BigEndian.PutUint64(currentWord, uint64(ack.shards))
     _, err := conn.Write(currentWord)
@@ -178,7 +180,7 @@ func sendHandshakeAck(conn io.Writer, ack HandshakeAck) error {
     return nil
 }
 
-func receiveHandshakeAck(conn io.Reader) (*HandshakeAck, error) {
+func receiveHandshakeAck(conn io.Reader) (*handshakeAck, error) {
     currentWord := make([]byte, 8)
     if _, err := io.ReadFull(conn, currentWord); err != nil {
         return nil, err
@@ -190,19 +192,19 @@ func receiveHandshakeAck(conn io.Reader) (*HandshakeAck, error) {
     }
     redirectToLen := binary.BigEndian.Uint64(currentWord)
 
-    redirectTo := make(map[ShardData]ListenAddress)
+    redirectTo := make(map[shardData]ListenAddress)
     for i := 0; uint64(i) < redirectToLen; i++ {
         if _, err := io.ReadFull(conn, currentWord); err != nil {
             return nil, err
         }
-        shardData := binary.BigEndian.Uint64(currentWord)
+        shards := binary.BigEndian.Uint64(currentWord)
 
         addr, err := receiveListenAddress(conn)
         if err != nil {
             return nil, err
         }
 
-        redirectTo[ShardData(shardData)] = *addr
+        redirectTo[shardData(shards)] = *addr
     }
 
     if _, err := io.ReadFull(conn, currentWord); err != nil {
@@ -210,41 +212,41 @@ func receiveHandshakeAck(conn io.Reader) (*HandshakeAck, error) {
     }
     nowServingLen := binary.BigEndian.Uint64(currentWord)
 
-    nowServing:= make(map[ShardData]uint64)
+    nowServing:= make(map[shardData]uint64)
     for i := 0; uint64(i) < nowServingLen; i++ {
         if _, err := io.ReadFull(conn, currentWord); err != nil {
             return nil, err
         }
-        shardData := binary.BigEndian.Uint64(currentWord)
+        shards := binary.BigEndian.Uint64(currentWord)
 
         if _, err := io.ReadFull(conn, currentWord); err != nil {
             return nil, err
         }
         lastByte := binary.BigEndian.Uint64(currentWord)
 
-        nowServing[ShardData(shardData)] = lastByte
+        nowServing[shardData(shards)] = lastByte
     }
 
-    ack := HandshakeAck {
+    ack := handshakeAck {
         ShardCount(shards),
-        RedirectTable { redirectTo },
-        ShardIndices { nowServing },
+        redirectTable { redirectTo },
+        shardIndices { nowServing },
     }
     return &ack, nil
 }
 
 var pagePool = sync.Pool{
     New: func() any {
-        return new(PageData)
+        return new(pageData)
     },
 }
 
-// Consume a raw sequence of bytes, producing a series of PageData.
-func newPaginator(conn io.Reader) iter.Seq2[*PageData, error] {
-    return func(yield func(*PageData, error) bool) {
+// Consume a raw sequence of bytes, producing a series of pageData.
+func newPaginator(conn io.Reader) iter.Seq2[*pageData, error] {
+    return func(yield func(*pageData, error) bool) {
         var startingByte uint64 = 0
         for {
-            page := pagePool.Get().(*PageData)
+            page := pagePool.Get().(*pageData)
             page.startingByte = startingByte
 
             bytesRead, err := conn.Read(page.data[:])
@@ -262,16 +264,16 @@ func newPaginator(conn io.Reader) iter.Seq2[*PageData, error] {
     }
 }
 
-// Consume an encoded series of pages producing a series of PageData.
-func newPageReader(conn io.Reader) iter.Seq2[*PageData, error] {
-    return func(yield func(*PageData, error) bool) {
+// Consume an encoded series of pages producing a series of pageData.
+func newPageReader(conn io.Reader) iter.Seq2[*pageData, error] {
+    return func(yield func(*pageData, error) bool) {
         for {
             pageHeader := make([]byte, 10)
             if _, err := io.ReadFull(conn, pageHeader); err != nil {
                 yield(nil, err)
                 return
             }
-            page := pagePool.Get().(*PageData)
+            page := pagePool.Get().(*pageData)
             page.startingByte = binary.BigEndian.Uint64(pageHeader[:8])
             page.length = binary.BigEndian.Uint16(pageHeader[8:])
 
@@ -288,20 +290,20 @@ func newPageReader(conn io.Reader) iter.Seq2[*PageData, error] {
     }
 }
 
-type PageWriter interface {
-    SendPageData(PageData) error
+type pageWriter interface {
+    sendPageData(pageData) error
 }
 
-// Encode a sequence of PageData onto a connection to be read via newPageReader.
-type PageSerializer struct {
+// Encode a sequence of pageData onto a connection to be read via newPageReader.
+type pageSerializer struct {
     w io.Writer
 }
 
-func newPageSerializer(w io.Writer) PageSerializer {
-    return PageSerializer { w }
+func newPageSerializer(w io.Writer) pageSerializer {
+    return pageSerializer { w }
 }
 
-func (self *PageSerializer) SendPageData(page PageData) error {
+func (self *pageSerializer) sendPageData(page pageData) error {
     currentWord := make([]byte, 10)
     binary.BigEndian.PutUint64(currentWord[:8], page.startingByte)
     binary.BigEndian.PutUint16(currentWord[8:], page.length)
@@ -316,16 +318,16 @@ func (self *PageSerializer) SendPageData(page PageData) error {
     return nil
 }
 
-// Encode the raw sequence of bytes that is represented by a sequence of PageData.
-type Depaginator struct {
+// Encode the raw sequence of bytes that is represented by a sequence of pageData.
+type depaginator struct {
     w io.Writer
 }
 
-func newDepaginator(w io.Writer) Depaginator {
-    return Depaginator { w }
+func newDepaginator(w io.Writer) depaginator {
+    return depaginator { w }
 }
 
-func (self *Depaginator) SendPageData(page PageData) error {
+func (self *depaginator) sendPageData(page pageData) error {
     _, err := self.w.Write(page.data[:page.length])
     return err
 }
