@@ -7,8 +7,11 @@ import (
     "net"
 )
 
+type RedirectAllowed bool
+
 type RemotePeer struct {
     shards ShardData
+    canRedirect RedirectAllowed
     childPeers uint64
     listeningOn ListenAddress
 }
@@ -62,7 +65,7 @@ func (self *RemotePeerTable) computeRedirectLocked(
     optimalPeerAddress := ListenAddress("invalid_hostname")
     optimalPeerUID := MaxUint64
     for uid, peer := range self.remotePeers {
-        if peer.childPeers < minChildPeers {
+        if peer.childPeers < minChildPeers && peer.canRedirect {
             minChildPeers = peer.childPeers
             optimalPeerAddress = peer.listeningOn
             optimalPeerUID = uid
@@ -77,13 +80,14 @@ func (self *RemotePeerTable) computeRedirectLocked(
 }
 
 func (self *RemotePeerTable) connectPeerLocked(
-    addr ListenAddress, shards ShardData,
+    addr ListenAddress, shards ShardData, canRedirect RedirectAllowed,
 ) uint64 {
     self.peerUIDAllocator += 1
     connectedUid := self.peerUIDAllocator
 
     self.remotePeers[connectedUid] = RemotePeer {
         shards,
+        canRedirect,
         0, // Start with no childPeers.
         addr,
     }
@@ -117,12 +121,16 @@ func (self *RemotePeerTable) redirectPeerOrConnectLocked(
 
     if remainingBandwidth >= requestedShardCount {
         nowServing = requestedShards
-        connectedUid = self.connectPeerLocked(info.peerListeningOn, nowServing)
+        connectedUid = self.connectPeerLocked(
+            info.peerListeningOn, nowServing, RedirectAllowed(true),
+        )
     } else if remainingBandwidth == 1 && grandchildren == 0 {
         nowServing = FirstShard
         redirect := requestedShards - nowServing
         redirectTo = self.computeRedirectLocked(redirect)
-        connectedUid = self.connectPeerLocked(info.peerListeningOn, nowServing)
+        connectedUid = self.connectPeerLocked(
+            info.peerListeningOn, nowServing, RedirectAllowed(false),
+        )
     } else {
         redirect := requestedShards
         redirectTo = self.computeRedirectLocked(redirect)
