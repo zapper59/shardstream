@@ -46,14 +46,24 @@ func (self *RemotePeerTable) countRemainingBandwidth() ShardCount {
     return remainingBandwidth
 }
 
+func (self *RemotePeerTable) countChildren() uint64 {
+    return uint64(len(self.remotePeers))
+}
+
 func (self *RemotePeerTable) countGrandchildren() uint64 {
-    grandchildren := uint64(0)
+    grandchildCount := uint64(0)
 
     for _, peer := range self.remotePeers {
-        grandchildren += peer.childPeers
+        grandchildCount += peer.childPeers
     }
 
-    return grandchildren
+    return grandchildCount
+}
+
+func (self *RemotePeerTable) incrementChildPeers(uid uint64) {
+    tempPeer := self.remotePeers[uid]
+    tempPeer.childPeers += 1
+    self.remotePeers[uid] = tempPeer
 }
 
 func (self *RemotePeerTable) computeRedirectLocked(
@@ -71,11 +81,24 @@ func (self *RemotePeerTable) computeRedirectLocked(
             optimalPeerUID = uid
         }
     }
-    tempPeer := self.remotePeers[optimalPeerUID]
-    tempPeer.childPeers += 1
-    self.remotePeers[optimalPeerUID] = tempPeer
+    self.incrementChildPeers(optimalPeerUID)
 
     redirectTo[shards] = optimalPeerAddress
+    return RedirectTable { redirectTo }
+}
+
+func (self *RemotePeerTable) computeMultiShardRedirectLocked(
+    requestedShards ShardData,
+) RedirectTable {
+    redirectTo := make(map[ShardData]ListenAddress)
+    shard := FirstShard
+
+    for uid, peer := range self.remotePeers {
+        redirectTo[shard] = peer.listeningOn
+        self.incrementChildPeers(uid)
+        shard = shard.nextShard(self.shardsInStream)
+    }
+
     return RedirectTable { redirectTo }
 }
 
@@ -103,7 +126,8 @@ func (self *RemotePeerTable) redirectPeerOrConnectLocked(
     nowServing := NoShards
 
     remainingBandwidth := self.countRemainingBandwidth()
-    grandchildren := self.countGrandchildren()
+    childCount := self.countChildren()
+    grandchildCount := self.countGrandchildren()
     requestedShards := everyShard(self.shardsInStream) & info.requestedShards
     requestedShardCount := requestedShards.countShards()
 
@@ -111,8 +135,8 @@ func (self *RemotePeerTable) redirectPeerOrConnectLocked(
         "Computing Topology",
         "bandwidth",
         remainingBandwidth,
-        "grandchildren",
-        grandchildren,
+        "grandchildCount",
+        grandchildCount,
         "requestedShards",
         requestedShards,
         "requestedShardCount",
@@ -124,7 +148,9 @@ func (self *RemotePeerTable) redirectPeerOrConnectLocked(
         connectedUid = self.connectPeerLocked(
             info.peerListeningOn, nowServing, RedirectAllowed(true),
         )
-    } else if remainingBandwidth == 1 && grandchildren == 0 {
+    } else if childCount == uint64(requestedShardCount) && grandchildCount == 0 {
+        redirectTo = self.computeMultiShardRedirectLocked(requestedShards)
+    } else if remainingBandwidth == 1 && grandchildCount == 0 {
         nowServing = FirstShard
         redirect := requestedShards - nowServing
         redirectTo = self.computeRedirectLocked(redirect)
@@ -132,8 +158,7 @@ func (self *RemotePeerTable) redirectPeerOrConnectLocked(
             info.peerListeningOn, nowServing, RedirectAllowed(false),
         )
     } else {
-        redirect := requestedShards
-        redirectTo = self.computeRedirectLocked(redirect)
+        redirectTo = self.computeRedirectLocked(requestedShards)
     }
 
     return connectedUid, redirectTo, nowServing
@@ -195,9 +220,10 @@ func runDiscovery(info Handshake, host ListenAddress) DiscoveryTable {
             ack.nowServing,
         }
 
-        for _, addr := range ack.redirectTo.addressByShard {
+        for shards, addr := range ack.redirectTo.addressByShard {
+            info2 := Handshake{ shards, info.peerListeningOn }
             discovery = combineDiscoveryTables(
-                discovery, runDiscovery(info, addr),
+                discovery, runDiscovery(info2, addr),
             )
         }
 
