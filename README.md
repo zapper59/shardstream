@@ -5,7 +5,12 @@
 The shardstream protocol is Bittorrent for livestreams. It defines a general purpose framework for streaming data through a tree shaped network built of one Coordinator node and many Peer nodes.
 
 The protocol includes a discovery handshake wherin the coordinator redirects new Peers down the tree to a leaf with minimal connected children. This distributes the flow of data evenly across the
-network. The max required upload bandwith for any particular node is equal to twice that of the incoming data bandwidth.
+network. 
+
+This protocol currently supports creating trees with variable shard counts enabling exponentially wide distribution trees while allowing each nodes upload bandwidth to be less than twice that of the
+incoming data stream. The two modes are:
+1. One Shard: The tree formed is a standard binary tree with a 2x branching factor. The max required upload bandwith for any particular node is equal to twice that of the incoming data bandwidth.
+2. Two Shards: The tree formed has a branching factor of [1, 2, 1.5] repeating. The max required upload bandwith for any particular node is equal to 1.5x that of the incoming data bandwidth.
 
 ## shardstreamTerminal
 
@@ -55,7 +60,7 @@ However, nodes P3 and P5 both take on 2 parents, each of which serve a separate 
 
 This tree structure triples the number of nodes at each layer every three layers deep you transmit.
 That is to say it DOES grow exponentially as layers are added.
-In fact if you model the number of layers required to distribute a stream across 1 million nodes this 1.5 branching factor tree is less than twice as tall as a binary tree of 1 million nodes would be.
+In fact if you model the number of layers required to distribute a stream across 1 million nodes this 1.5 branching factor tree is about 1.8 times as tall as a binary tree of 1 million nodes would be.
 
 ## TODO
 
