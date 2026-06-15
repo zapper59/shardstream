@@ -3,7 +3,7 @@ package main
 import (
     "bufio"
     "github.com/akamensky/argparse"
-    "github.com/zapper59/shardstream"
+    "github.com/zapper59/shardstream/src"
     "log"
     "log/slog"
     "os"
