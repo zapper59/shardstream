@@ -25,7 +25,7 @@ func newTwoShardRecombinator(
     incomingStreams[aShard] = singleShardStream {
         aLastByte, aNext,
     }
-    
+
     bNext, _ := iter.Pull2(b)
     incomingStreams[bShard] = singleShardStream {
         bLastByte, bNext,
@@ -40,7 +40,6 @@ func newTwoShardRecombinator(
 
     return func(yield func(*pageData, error) bool) {
         for {
-            slog.Debug("recieving", "shard", nextShardToRead)
             page, err, ok := incomingStreams[nextShardToRead].next()
             if !ok {
                 return

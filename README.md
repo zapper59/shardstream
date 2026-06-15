@@ -28,6 +28,12 @@ go run examples/shardstreamTerminal coordinator -l localhost:1234
 go run examples/shardstreamTerminal peer -c localhost:1234 -l localhost:1235
 ```
 
+To observe the sharded handshake, run a second peer with debug logging enabled:
+
+```
+go run examples/shardstreamTerminal peer -c localhost:1234 -l localhost:1236 -v
+```
+
 ## VLC Livestreaming
 
 The following steps build a simple example of livestreaming an MP4 file over shardstream, piping the output into a VLC instance started from within WSL.

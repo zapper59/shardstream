@@ -65,7 +65,7 @@ func parseArgs() (ParsedArgs) {
         "shardCount",
         &argparse.Options{
             Required: false, 
-            Default: 1,
+            Default: 2,
             Help: "The number of shards to split data into. (1 or 2)",
         },
     )
