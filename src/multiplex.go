@@ -17,11 +17,15 @@ type Multiplexer struct {
 func newMultiplexer(shardsInStream ShardCount, shardIndices ShardIndices) (Multiplexer) {
     bestLastByte := uint64(0)
     bestShard := FirstShard
-    for shard, lastByte := range shardIndices.lastByteByShard {
+
+    currShard := FirstShard
+    for _ = range shardsInStream {
+        lastByte := shardIndices.lastByteByShard[currShard]
         if lastByte >= bestLastByte {
             bestLastByte = lastByte
-            bestShard = shard
+            bestShard = currShard
         }
+        currShard = currShard.nextShard(shardsInStream)
     }
 
     return Multiplexer {
