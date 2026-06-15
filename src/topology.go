@@ -120,9 +120,9 @@ func (self *RemotePeerTable) redirectPeerOrConnectLocked(
         connectedUid = self.connectPeerLocked(info.peerListeningOn, nowServing)
     } else if remainingBandwidth == 1 && grandchildren == 0 {
         nowServing = FirstShard
-        connectedUid = self.connectPeerLocked(info.peerListeningOn, nowServing)
         redirect := requestedShards - nowServing
         redirectTo = self.computeRedirectLocked(redirect)
+        connectedUid = self.connectPeerLocked(info.peerListeningOn, nowServing)
     } else {
         redirect := requestedShards
         redirectTo = self.computeRedirectLocked(redirect)
