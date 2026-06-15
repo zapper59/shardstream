@@ -40,22 +40,17 @@ The following steps build a simple example of livestreaming an MP4 file over sha
 
 Make an alias to your local VLC installation:
 ```
-alias vlcexe='/c/Program\ Files/VideoLAN/VLC/vlc.exe'
+alias vlcexe='/mnt/c/Program\ Files/VideoLAN/VLC/vlc.exe'
 ```
 
 Start the video stream:
 ```
-vlcexe -q --loop /path/to/video.mp4 --sout='#duplicate{dst=file{mux=ts,dst='-'}}' | go run examples/shardstreamTerminal/ coordinator -l localhost:1234
+vlcexe -q --loop /path/to/video.mp4 --sout='#transcode{venc=x264{keyint=60,idrint=2},vcodec=h264,samplerate=22050}:duplicate{dst=file{mux=ts,dst='-'},dst=display}' | go run examples/shardstreamTerminal/ coordinator -l localhost:1234
 ```
 
 Connect a peer node to view the video:
 ```
 go run examples/shardstreamTerminal/ peer -c localhost:1234 -l localhost:1235 | vlcexe -q -
-```
-
-Optional - Transcode the video to h264 to better support stream interruptions:
-```
---sout='#transcode{venc=x264{keyint=60,idrint=2},vcodec=h264,samplerate=22050}:duplicate{dst=file{mux=ts,dst='-'},dst=display}'
 ```
 
 ## A 1.5 Branching Factor
