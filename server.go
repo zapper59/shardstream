@@ -59,7 +59,7 @@ func RunCoordinator(streamSource io.Reader, options CoordinatorOptions) {
         s = s.nextShard(options.Shards)
     }
     server := newServer(options.Shards, shardIndices)
-    go server.driveServer(listener)
+    go server.driveServer(netListener{ listener })
     server.driveDataStream(newPaginator(streamSource))
 }
 
@@ -84,7 +84,7 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
 
     server := newServer(discovery.shards, discovery.shardIndices)
     go server.runLocalPeer(streamOutput)
-    go server.driveServer(listener)
+    go server.driveServer(netListener{ listener })
 
     if len(discovery.parents) == 1 {
         conn := discovery.parents[everyShard(discovery.shards)]
@@ -130,11 +130,28 @@ func (self *server) dropPeer(uid uint64) {
     self.mutex.Unlock()
 }
 
-func (self *server) driveServer(listener net.Listener) {
-    defer listener.Close()
+type abstractListener interface {
+    close() error
+    accept() (io.ReadWriteCloser, error)
+}
+
+type netListener struct {
+    inner net.Listener
+}
+
+func (self netListener) close() error {
+    return self.inner.Close()
+}
+
+func (self netListener) accept() (io.ReadWriteCloser, error) {
+    return self.inner.Accept()
+}
+
+func (self *server) driveServer(listener abstractListener) {
+    defer listener.close()
 
     for {
-        if conn, err := listener.Accept(); err != nil {
+        if conn, err := listener.accept(); err != nil {
             slog.Debug("Failed accept", "ERR", err)
         } else {
             go self.handleConnection(conn)
@@ -205,7 +222,7 @@ func (self *server) redirectPeerOrConnect(
     return connectedUid
 }
 
-func (self *server) handleConnection(conn net.Conn) {
+func (self *server) handleConnection(conn io.ReadWriteCloser) {
     defer conn.Close()
 
     info, err := receiveHandshake(conn)
