@@ -7,6 +7,7 @@ package shardstream
 
 import (
     "errors"
+    "github.com/zapper59/abstractGoNet"
     "io"
     "iter"
     "log"
@@ -42,12 +43,13 @@ type PeerOptions struct {
 // streamSource, which can be any [io.Reader] such as [os.Stdin]. The server will opportunistically perform reads for available
 // data up to 2^16 bytes at a time. On any read error all processes for all
 // nodes in the tree will exit.
-func RunCoordinator(streamSource io.Reader, options CoordinatorOptions) {
+// Returns a function that will run the main process loop for the coordinator.
+func StartCoordinator(streamSource io.Reader, options CoordinatorOptions, host abstractGoNet.Net) func () {
     if options.Shards < 1 || options.Shards > 2 {
         log.Fatal("Only a shard count of 1 or 2 are supported.")
     }
 
-    listener, err := net.Listen("tcp", options.ListenAddress)
+    listener, err := host.Listen("tcp", options.ListenAddress)
     if err != nil {
         log.Fatal(err)
     }
@@ -59,8 +61,11 @@ func RunCoordinator(streamSource io.Reader, options CoordinatorOptions) {
         s = s.nextShard(options.Shards)
     }
     server := newServer(options.Shards, shardIndices)
-    go server.driveServer(netListener{ listener })
-    server.driveDataStream(newPaginator(streamSource))
+
+    return func () {
+        go server.driveServer(listener)
+        server.driveDataStream(newPaginator(streamSource))
+    }
 }
 
 // Start a peer node's server, accepting the data stream as discovered from a
@@ -68,7 +73,10 @@ func RunCoordinator(streamSource io.Reader, options CoordinatorOptions) {
 // bandwidth equal to the branching factor configured by the coordinator.
 // streamOutput will be handed a copy of the stream being broadcast and can be
 // any [io.Writer] such as [os.Stdout].
-func RunPeer(streamOutput io.Writer, options PeerOptions) {
+// Returns a function that will run the main process loop for the peer.
+func StartPeer(
+    streamOutput io.Writer, options PeerOptions, host abstractGoNet.Net,
+) func () {
     listener, err := net.Listen("tcp", options.ListenAddress)
     if err != nil {
         log.Fatal(err)
@@ -83,22 +91,25 @@ func RunPeer(streamOutput io.Writer, options PeerOptions) {
     slog.Debug("Discovery completed.", "parents", discovery.parents)
 
     server := newServer(discovery.shards, discovery.shardIndices)
-    go server.runLocalPeer(streamOutput)
-    go server.driveServer(netListener{ listener })
 
-    if len(discovery.parents) == 1 {
-        conn := discovery.parents[everyShard(discovery.shards)]
-        server.driveDataStream(newPageReader(conn))
-    } else if len(discovery.parents) == 2 {
-        a := firstShard
-        b := a.nextShard(discovery.shards)
-        recombinated := newTwoShardRecombinator(
-            newPageReader(discovery.parents[a]),
-            discovery.shardIndices.lastByteByShard[a],
-            newPageReader(discovery.parents[b]),
-            discovery.shardIndices.lastByteByShard[b],
-        )
-        server.driveDataStream(recombinated)
+    return func () {
+        go server.runLocalPeer(streamOutput)
+        go server.driveServer(listener)
+
+        if len(discovery.parents) == 1 {
+            conn := discovery.parents[everyShard(discovery.shards)]
+            server.driveDataStream(newPageReader(conn))
+        } else if len(discovery.parents) == 2 {
+            a := firstShard
+            b := a.nextShard(discovery.shards)
+            recombinated := newTwoShardRecombinator(
+                newPageReader(discovery.parents[a]),
+                discovery.shardIndices.lastByteByShard[a],
+                newPageReader(discovery.parents[b]),
+                discovery.shardIndices.lastByteByShard[b],
+            )
+            server.driveDataStream(recombinated)
+        }
     }
 }
 
@@ -130,28 +141,11 @@ func (self *server) dropPeer(uid uint64) {
     self.mutex.Unlock()
 }
 
-type abstractListener interface {
-    close() error
-    accept() (io.ReadWriteCloser, error)
-}
-
-type netListener struct {
-    inner net.Listener
-}
-
-func (self netListener) close() error {
-    return self.inner.Close()
-}
-
-func (self netListener) accept() (io.ReadWriteCloser, error) {
-    return self.inner.Accept()
-}
-
-func (self *server) driveServer(listener abstractListener) {
-    defer listener.close()
+func (self *server) driveServer(listener net.Listener) {
+    defer listener.Close()
 
     for {
-        if conn, err := listener.accept(); err != nil {
+        if conn, err := listener.Accept(); err != nil {
             slog.Debug("Failed accept", "ERR", err)
         } else {
             go self.handleConnection(conn)

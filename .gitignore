@@ -19,3 +19,7 @@ profile.cov
 
 # ctags
 tags
+
+# sum
+*.sum
+**/*.sum

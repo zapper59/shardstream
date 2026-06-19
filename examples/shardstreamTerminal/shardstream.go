@@ -3,6 +3,7 @@ package main
 import (
     "bufio"
     "github.com/akamensky/argparse"
+    "github.com/zapper59/abstractGoNet"
     "github.com/zapper59/shardstream"
     "log"
     "log/slog"
@@ -27,18 +28,24 @@ func main() {
         slog.SetLogLoggerLevel(slog.LevelDebug)
     }
 
+    host := abstractGoNet.RealNet()
+
     if parsedArgs.coordinatorCommand.Happened() {
         stdin := bufio.NewReader(os.Stdin)
         shards := shardstream.ShardCount(*parsedArgs.shardCount)
-        shardstream.RunCoordinator(
+        runCoordinator := shardstream.StartCoordinator(
             stdin,
             shardstream.CoordinatorOptions{ shards, parsedArgs.listenAddress },
+            host,
         )
+        runCoordinator()
     } else if parsedArgs.peerCommand.Happened() {
-        shardstream.RunPeer(
+        runPeer := shardstream.StartPeer(
             os.Stdout,
             shardstream.PeerOptions{ parsedArgs.listenAddress, *parsedArgs.coordinatorAddress },
+            host,
         )
+        runPeer()
     } else {
         log.Fatal("Unexpected lack of subcommand!")
     }
