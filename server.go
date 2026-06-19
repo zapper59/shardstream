@@ -42,9 +42,9 @@ type PeerOptions struct {
 // Start a coordinator node's server, broadcasting the data read from
 // streamSource, which can be any [io.Reader] such as [os.Stdin]. The server will opportunistically perform reads for available
 // data up to 2^16 bytes at a time. On any read error all processes for all
-// nodes in the tree will exit.
+// nodes in the tree will return [io.EOF].
 // Returns a function that will run the main process loop for the coordinator.
-func StartCoordinator(streamSource io.Reader, options CoordinatorOptions, host abstractGoNet.Net) func () {
+func StartCoordinator(streamSource io.Reader, options CoordinatorOptions, host abstractGoNet.Net) func () error {
     if options.Shards < 1 || options.Shards > 2 {
         log.Fatal("Only a shard count of 1 or 2 are supported.")
     }
@@ -62,9 +62,9 @@ func StartCoordinator(streamSource io.Reader, options CoordinatorOptions, host a
     }
     server := newServer(options.Shards, shardIndices)
 
-    return func () {
+    return func () error {
         go server.driveServer(listener)
-        server.driveDataStream(newPaginator(streamSource))
+        return server.driveDataStream(newPaginator(streamSource))
     }
 }
 
@@ -76,7 +76,7 @@ func StartCoordinator(streamSource io.Reader, options CoordinatorOptions, host a
 // Returns a function that will run the main process loop for the peer.
 func StartPeer(
     streamOutput io.Writer, options PeerOptions, host abstractGoNet.Net,
-) func () {
+) func () error {
     listener, err := host.Listen("tcp", options.ListenAddress)
     if err != nil {
         log.Fatal(err)
@@ -94,13 +94,13 @@ func StartPeer(
 
     server := newServer(discovery.shards, discovery.shardIndices)
 
-    return func () {
+    return func () error {
         go server.runLocalPeer(streamOutput)
         go server.driveServer(listener)
 
         if len(discovery.parents) == 1 {
             conn := discovery.parents[everyShard(discovery.shards)]
-            server.driveDataStream(newPageReader(conn))
+            return server.driveDataStream(newPageReader(conn))
         } else if len(discovery.parents) == 2 {
             a := firstShard
             b := a.nextShard(discovery.shards)
@@ -110,7 +110,10 @@ func StartPeer(
                 newPageReader(discovery.parents[b]),
                 discovery.shardIndices.lastByteByShard[b],
             )
-            server.driveDataStream(recombinated)
+            return server.driveDataStream(recombinated)
+        } else {
+            log.Fatalf("invalid discovery count of %d", len(discovery.parents))
+            return nil
         }
     }
 }
@@ -162,15 +165,16 @@ func (self *server) sendData(data pageData) {
     self.connectedPeers.sendDataLocked(data)
 }
 
-func (self *server) driveDataStream(streamSource iter.Seq2[*pageData, error]) {
+func (self *server) driveDataStream(streamSource iter.Seq2[*pageData, error]) error {
     for page, err := range streamSource {
         if err != nil {
-            log.Fatal(err)
-            return
+            return err
         }
 
         self.sendData(*page)
     }
+
+    return nil
 }
 
 func (self *server) redirectPeerOrConnect(

@@ -38,14 +38,14 @@ func main() {
             shardstream.CoordinatorOptions{ shards, parsedArgs.listenAddress },
             host,
         )
-        runCoordinator()
+        log.Fatal(runCoordinator())
     } else if parsedArgs.peerCommand.Happened() {
         runPeer := shardstream.StartPeer(
             os.Stdout,
             shardstream.PeerOptions{ parsedArgs.listenAddress, *parsedArgs.coordinatorAddress },
             host,
         )
-        runPeer()
+        log.Fatal(runPeer())
     } else {
         log.Fatal("Unexpected lack of subcommand!")
     }
