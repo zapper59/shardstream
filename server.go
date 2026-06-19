@@ -16,6 +16,10 @@ import (
     "sync"
 )
 
+var InvalidShardCount = errors.New(
+    "Only a shard count of 1 or 2 are supported.",
+)
+
 // The settings to pass while creating a coordinator node's server.
 type CoordinatorOptions struct {
     // The number of shards (1 or 2) this cluster will use to communicate.
@@ -46,12 +50,16 @@ type PeerOptions struct {
 // Returns a function that will run the main process loop for the coordinator.
 func StartCoordinator(streamSource io.Reader, options CoordinatorOptions, host abstractGoNet.Net) func () error {
     if options.Shards < 1 || options.Shards > 2 {
-        log.Fatal("Only a shard count of 1 or 2 are supported.")
+        return func () error {
+            return InvalidShardCount
+        }
     }
 
     listener, err := host.Listen("tcp", options.ListenAddress)
     if err != nil {
-        log.Fatal(err)
+        return func () error {
+            return err
+        }
     }
 
     shardIndices := shardIndices{ make(map[shardData]uint64) }
@@ -79,7 +87,9 @@ func StartPeer(
 ) func () error {
     listener, err := host.Listen("tcp", options.ListenAddress)
     if err != nil {
-        log.Fatal(err)
+        return func () error {
+            return err
+        }
     }
 
     slog.Debug("Beginning discovery.")
