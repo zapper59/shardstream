@@ -97,9 +97,14 @@ func StartPeer(
         initiallyRequestedShardData,
         ListenAddress(options.ListenAddress),
     }
-    discovery := runDiscovery(
+    discovery, err := runDiscovery(
         info, ListenAddress(options.CoordinatorAddress), host,
     )
+    if err != nil {
+        return func () error {
+            return err
+        }
+    }
     slog.Debug("Discovery completed.", "parents", discovery.parents)
 
     server := newServer(discovery.shards, discovery.shardIndices)

@@ -3,7 +3,6 @@ package shardstream
 import (
     "github.com/zapper59/abstractGoNet"
     "io"
-    "log"
     "log/slog"
 )
 
@@ -189,21 +188,21 @@ func combineDiscoveryTables(
 
 func runDiscovery(
     info handshake, hostname ListenAddress, host abstractGoNet.Net,
-) discoveryTable {
+) (*discoveryTable, error) {
     slog.Debug("Dialing", "host", hostname)
     conn, err := host.Dial("tcp", string(hostname))
     if err != nil {
-        log.Fatal(err)
+        return nil, err
     }
 
     slog.Debug("Begin Handshake")
     if err := sendHandshake(conn, info); err != nil {
-        log.Fatal(err)
+        return nil, err
     }
 
     ack, err := receiveHandshakeAck(conn)
     if err != nil {
-        log.Fatal(err)
+        return nil, err
     }
     slog.Debug(
         "Ack Received",
@@ -224,12 +223,14 @@ func runDiscovery(
 
         for shards, addr := range ack.redirectTo.addressByShard {
             info2 := handshake{ shards, info.peerListeningOn }
-            discovery = combineDiscoveryTables(
-                discovery, runDiscovery(info2, addr, host),
-            )
+            subtable, err := runDiscovery(info2, addr, host)
+            if err != nil {
+                return nil, err
+            }
+            discovery = combineDiscoveryTables(discovery, *subtable)
         }
 
-        return discovery
+        return &discovery, nil
     } else {
         parents := make(map[shardData]io.Reader)
 
@@ -250,11 +251,13 @@ func runDiscovery(
 
         for shard, addr := range ack.redirectTo.addressByShard {
             info2 := handshake{ shard, info.peerListeningOn }
-            discovery = combineDiscoveryTables(
-                discovery, runDiscovery(info2, addr, host),
-            )
+            subtable, err := runDiscovery(info2, addr, host)
+            if err != nil {
+                return nil, err
+            }
+            discovery = combineDiscoveryTables(discovery, *subtable)
         }
 
-        return discovery
+        return &discovery, nil
     }
 }
