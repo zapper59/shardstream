@@ -1,10 +1,10 @@
 package shardstream
 
 import (
+    "github.com/zapper59/abstractGoNet"
     "io"
     "log"
     "log/slog"
-    "net"
 )
 
 type redirectAllowed bool
@@ -187,9 +187,11 @@ func combineDiscoveryTables(
     return discovery
 }
 
-func runDiscovery(info handshake, host ListenAddress) discoveryTable {
-    slog.Debug("Dialing", "host", host)
-    conn, err := net.Dial("tcp", string(host))
+func runDiscovery(
+    info handshake, hostname ListenAddress, host abstractGoNet.Net,
+) discoveryTable {
+    slog.Debug("Dialing", "host", hostname)
+    conn, err := host.Dial("tcp", string(hostname))
     if err != nil {
         log.Fatal(err)
     }
@@ -223,7 +225,7 @@ func runDiscovery(info handshake, host ListenAddress) discoveryTable {
         for shards, addr := range ack.redirectTo.addressByShard {
             info2 := handshake{ shards, info.peerListeningOn }
             discovery = combineDiscoveryTables(
-                discovery, runDiscovery(info2, addr),
+                discovery, runDiscovery(info2, addr, host),
             )
         }
 
@@ -249,7 +251,7 @@ func runDiscovery(info handshake, host ListenAddress) discoveryTable {
         for shard, addr := range ack.redirectTo.addressByShard {
             info2 := handshake{ shard, info.peerListeningOn }
             discovery = combineDiscoveryTables(
-                discovery, runDiscovery(info2, addr),
+                discovery, runDiscovery(info2, addr, host),
             )
         }
 

@@ -77,7 +77,7 @@ func StartCoordinator(streamSource io.Reader, options CoordinatorOptions, host a
 func StartPeer(
     streamOutput io.Writer, options PeerOptions, host abstractGoNet.Net,
 ) func () {
-    listener, err := net.Listen("tcp", options.ListenAddress)
+    listener, err := host.Listen("tcp", options.ListenAddress)
     if err != nil {
         log.Fatal(err)
     }
@@ -87,7 +87,9 @@ func StartPeer(
         initiallyRequestedShardData,
         ListenAddress(options.ListenAddress),
     }
-    discovery := runDiscovery(info, ListenAddress(options.CoordinatorAddress))
+    discovery := runDiscovery(
+        info, ListenAddress(options.CoordinatorAddress), host,
+    )
     slog.Debug("Discovery completed.", "parents", discovery.parents)
 
     server := newServer(discovery.shards, discovery.shardIndices)
