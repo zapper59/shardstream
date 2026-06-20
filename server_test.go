@@ -76,3 +76,52 @@ func TestPeerWithNoCoordinator(t *testing.T) {
         t.Error(err)
     }
 }
+
+const someData = "some data"
+
+func doOnePeerTest(shards ShardCount, t *testing.T) {
+    wan := abstractGoNet.NewVirtualWan()
+    host1 := wan.NewVirtualHost("coordinator")
+
+    inR, inW := io.Pipe()
+    runCoordinator := StartCoordinator(
+        inR,
+        CoordinatorOptions{ shards, ":8080" },
+        host1,
+    )
+    go runCoordinator()
+
+    outR, outW := io.Pipe()
+    host2 := wan.NewVirtualHost("peer")
+    runPeer := StartPeer(
+        outW,
+        PeerOptions{ ":8080", "coordinator:8080" },
+        host2,
+    )
+    go runPeer()
+
+    for _ = range 10 {
+        size, err := io.WriteString(inW, someData)
+        if err != nil {
+            t.Error(err)
+        }
+
+        buff := make([]byte, size)
+        _, err = io.ReadFull(outR, buff)
+        if err != nil {
+            t.Error(err)
+        }
+
+        if string(buff) != someData {
+            t.Errorf("invalid buff")
+        }
+    }
+}
+
+func TestOnePeerOneShard(t *testing.T) {
+    doOnePeerTest(ShardCount(1), t)
+}
+
+func TestOnePeerTwoShards(t *testing.T) {
+    doOnePeerTest(ShardCount(2), t)
+}
